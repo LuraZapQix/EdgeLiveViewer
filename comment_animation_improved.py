@@ -28,7 +28,7 @@ class CommentOverlayWindow(QWidget):
         self.font_family = "MSP Gothic"
         self.font_shadow_direction = "bottom-right"
         self.font_shadow_color = QColor("#000000")
-        self.comment_speed = 6
+        self.comment_speed = 6.0  # デフォルトを6.0秒（浮動小数点数）に変更
         self.display_position = "center"
         self.hide_anchor_comments = False  # 新規追加
         self.hide_url_comments = False     # 新規追加
@@ -53,7 +53,7 @@ class CommentOverlayWindow(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_comments)
-        self.timer.start(16)
+        self.timer.start(8)
 
         self.comment_id_counter = 0
 
@@ -301,7 +301,7 @@ class CommentOverlayWindow(QWidget):
         self.comment_id_counter += 1
         comment_id = f"comment_{int(time.time()*1000)}_{self.comment_id_counter}"
         total_distance = self.width() + text_width
-        speed = total_distance / self.comment_speed
+        speed = total_distance / self.comment_speed  # self.comment_speed は float
         comment_obj = {
             'id': comment_id,
             'text': text,
@@ -312,7 +312,6 @@ class CommentOverlayWindow(QWidget):
             'creation_time': QApplication.instance().property("comment_time") or 0,
             'speed': speed
         }
-        
         self.comments.append(comment_obj)
         logger.info(f"コメント追加: {text}, ID: {comment_id}, y: {y_position}, speed: {speed}")
         self.update()
@@ -328,7 +327,7 @@ class CommentOverlayWindow(QWidget):
             processed_ids.add(comment['id'])
             
             elapsed = current_time - comment['creation_time']
-            comment['x'] -= comment['speed'] * (16 / 1000.0)
+            comment['x'] -= comment['speed'] * (8 / 1000.0)
             if comment['x'] < -comment['width']:
                 to_remove.append(comment['id'])
         
@@ -432,11 +431,11 @@ class CommentOverlayWindow(QWidget):
         self.font_family = settings.get("font_family", self.font_family)
         self.font_shadow_direction = settings.get("font_shadow_direction", self.font_shadow_direction)
         self.font_shadow_color = QColor(settings.get("font_shadow_color", self.font_shadow_color.name()))
-        self.comment_speed = max(3, min(12, settings.get("comment_speed", self.comment_speed)))
+        self.comment_speed = settings.get("comment_speed", self.comment_speed)  # float を直接受け取る        self.display_position = settings.get("display_position", self.display_position)
         self.display_position = settings.get("display_position", self.display_position)
         self.max_comments = settings.get("max_comments", self.max_comments)
-        self.hide_anchor_comments = settings.get("hide_anchor_comments", self.hide_anchor_comments)  # 新規追加
-        self.hide_url_comments = settings.get("hide_url_comments", self.hide_url_comments)          # 新規追加
+        self.hide_anchor_comments = settings.get("hide_anchor_comments", self.hide_anchor_comments)
+        self.hide_url_comments = settings.get("hide_url_comments", self.hide_url_comments)
         
         opacity = settings.get("window_opacity", 0.8)
         self.setWindowOpacity(opacity)

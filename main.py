@@ -348,7 +348,7 @@ class MainWindow(QMainWindow):
             "font_family": "MSP Gothic",
             "font_shadow_direction": "bottom-right",
             "font_shadow_color": "#000000",
-            "comment_speed": 6,
+            "comment_speed": 6.0,  # デフォルトを6.0秒に変更
             "display_position": "center",
             "max_comments": 40,
             "window_opacity": 0.8,
@@ -361,8 +361,8 @@ class MainWindow(QMainWindow):
             "overlay_y": 100,
             "overlay_width": 600,
             "overlay_height": 800,
-            "hide_anchor_comments": False,  # 新規追加
-            "hide_url_comments": False      # 新規追加
+            "hide_anchor_comments": False,
+            "hide_url_comments": False
         }
         
         try:
@@ -374,12 +374,9 @@ class MainWindow(QMainWindow):
                 for key, value in loaded_settings.items():
                     if key in default_settings:
                         default_settings[key] = value
-                    else:
-                        logger.warning(f"不明な設定キー {key} が settings.json に含まれています")
         except Exception as e:
             logger.error(f"設定の読み込みに失敗しました: {str(e)}")
         
-        default_settings["comment_speed"] = max(3, min(12, default_settings["comment_speed"]))
         return default_settings
     
     def save_window_position(self, x, y, width, height):

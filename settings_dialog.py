@@ -149,12 +149,13 @@ class SettingsDialog(QDialog):
         display_group = QGroupBox("表示設定")
         display_form = QFormLayout()
         
+        # コメント速度（2.0〜15.0秒、0.1秒刻み）
         self.comment_speed_slider = QSlider(Qt.Horizontal)
-        self.comment_speed_slider.setRange(3, 12)
-        self.comment_speed_slider.setValue(self.settings["comment_speed"])
+        self.comment_speed_slider.setRange(20, 150)  # 2.0〜15.0秒を10倍した値（整数で扱う）
+        self.comment_speed_slider.setValue(int(self.settings["comment_speed"] * 10))  # 現在の値を10倍して設定
         self.comment_speed_slider.setTickPosition(QSlider.TicksBelow)
-        self.comment_speed_slider.setTickInterval(1)
-        self.comment_speed_label = QLabel(f"{self.settings['comment_speed']}秒")
+        self.comment_speed_slider.setTickInterval(5)  # 0.5秒刻み
+        self.comment_speed_label = QLabel(f"{self.settings['comment_speed']:.1f}秒")
         self.comment_speed_slider.valueChanged.connect(self.update_comment_speed_label)
         display_form.addRow("コメント速度:", self.comment_speed_slider)
         display_form.addRow("", self.comment_speed_label)
@@ -287,7 +288,7 @@ class SettingsDialog(QDialog):
         self.font_shadow_color_button.setText(color_name)
 
     def update_comment_speed_label(self, value):
-        self.comment_speed_label.setText(f"{value}秒")
+        self.comment_speed_label.setText(f"{value / 10.0:.1f}秒")  # 10で割って小数点以下1桁で表示
     
     def update_window_opacity_label(self, value):
         self.window_opacity_label.setText(f"{value}%")
@@ -315,7 +316,7 @@ class SettingsDialog(QDialog):
         self.settings["font_shadow"] = self.font_shadow_slider.value()
         self.settings["font_color"] = self.font_color_button.text()  # QColor.name() から直接取得
         self.settings["font_family"] = self.font_family_combo.currentData()  # フォントファミリーを保存
-        self.settings["comment_speed"] = self.comment_speed_slider.value()
+        self.settings["comment_speed"] = self.comment_speed_slider.value() / 10.0  # 浮動小数点数として保存
         self.settings["display_position"] = self.display_position_combo.currentData()
         self.settings["max_comments"] = self.max_comments_spin.value()
         self.settings["window_opacity"] = self.window_opacity_slider.value() / 100.0
