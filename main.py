@@ -317,7 +317,7 @@ class MainWindow(QMainWindow):
         logger.info(f"次スレが見つかりました: {next_thread_id} - {next_thread_title}")
         
         self.connect_to_thread_by_id(next_thread_id, next_thread_title)
-        self.overlay_window.add_system_message(f"[{next_thread_title}] に接続しました", message_type="next_thread_connected")
+        self.overlay_window.add_system_message(f"次スレ： {next_thread_title} に接続しました。", message_type="next_thread_connected")
         self.statusBar().showMessage(f"次スレ {next_thread_id} - {next_thread_title} に接続しました")
     
     def on_search_finished(self, success):

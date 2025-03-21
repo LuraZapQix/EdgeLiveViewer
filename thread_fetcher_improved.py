@@ -197,7 +197,7 @@ class CommentFetcher(QThread):
                 if len(lines) >= 1000:
                     logger.info(f"スレッド {self.thread_id} が1000レスに到達しました。次スレを探します。")
                     self.thread_filled.emit(self.thread_id, self.thread_title)
-                    self.thread_over_1000.emit(f"スレッド {self.thread_title} がレスに到達しました。")  # シグナル発行
+                    self.thread_over_1000.emit(f"スレッド： {self.thread_title} が1000レスに到達しました。")  # シグナル発行
                     break
                 
                 time.sleep(self.update_interval)
