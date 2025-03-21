@@ -32,6 +32,7 @@ class CommentOverlayWindow(QWidget):
         self.display_position = "center"
         self.hide_anchor_comments = False  # 新規追加
         self.hide_url_comments = False     # 新規追加
+        self.spacing = 20  # 修正: デフォルト値として追加
 
         self.move_area_height = 25
         self.close_button_size = 22
@@ -106,8 +107,7 @@ class CommentOverlayWindow(QWidget):
         font_metrics = QFontMetrics(font)
         
         line_height = font_metrics.height()
-        spacing = line_height // 2
-        self.row_height = line_height + spacing
+        self.row_height = line_height + self.spacing
         
         self.max_rows = max(1, (self.height() - self.move_area_height - line_height) // self.row_height)
         self.row_usage = {}
@@ -468,11 +468,12 @@ class CommentOverlayWindow(QWidget):
         self.font_family = settings.get("font_family", self.font_family)
         self.font_shadow_direction = settings.get("font_shadow_direction", self.font_shadow_direction)
         self.font_shadow_color = QColor(settings.get("font_shadow_color", self.font_shadow_color.name()))
-        self.comment_speed = settings.get("comment_speed", self.comment_speed)  # float を直接受け取る        self.display_position = settings.get("display_position", self.display_position)
+        self.comment_speed = settings.get("comment_speed", self.comment_speed)
         self.display_position = settings.get("display_position", self.display_position)
         self.max_comments = settings.get("max_comments", self.max_comments)
         self.hide_anchor_comments = settings.get("hide_anchor_comments", self.hide_anchor_comments)
         self.hide_url_comments = settings.get("hide_url_comments", self.hide_url_comments)
+        self.spacing = settings.get("spacing", self.spacing)
         
         opacity = settings.get("window_opacity", 0.8)
         self.setWindowOpacity(opacity)

@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-設定ダイアログ
-ユーザーがフォントサイズ、色、速度などの設定を変更できるダイアログ
-"""
-
 import os
 import json
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
@@ -16,15 +11,11 @@ from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QColor, QFont
 
 class SettingsDialog(QDialog):
-    """
-    設定ダイアログ
-    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("設定")
         self.setMinimumWidth(500)
         
-        # 親から渡された設定を使用、なければデフォルト
         self.settings = parent.settings if parent is not None else {
             "font_size": 24,
             "font_weight": 75,
@@ -41,15 +32,16 @@ class SettingsDialog(QDialog):
             "playback_speed": 1.0,
             "auto_next_thread": True,
             "next_thread_search_duration": 180,
-            "hide_anchor_comments": False,  # 新規追加
-            "hide_url_comments": False      # 新規追加
+            "hide_anchor_comments": False,
+            "hide_url_comments": False,
+            "spacing": 10  # デフォルト行間
         }
         
         self.load_settings()
         self.init_ui()
     
     def init_ui(self):
-        print("現在の self.settings:", self.settings)  # デバッグ用
+        print("現在の self.settings:", self.settings)
 
         layout = QVBoxLayout()
         
@@ -63,14 +55,11 @@ class SettingsDialog(QDialog):
         font_group = QGroupBox("フォント設定")
         font_layout = QFormLayout()
         
-        # フォントファミリー
         self.font_family_combo = QComboBox()
         font_options = [
             ("MSP Gothic", "MSP Gothic"),
             ("Meiryo", "Meiryo"),
-            ("Yu Gothic", "Yu Gothic"),
-            ("Segoe UI Emoji", "Segoe UI Emoji"),
-            ("Noto Sans JP", "Noto Sans JP"),
+            ("Yu Gothic", "Yu Gothic")
         ]
         for display_name, font_name in font_options:
             self.font_family_combo.addItem(display_name, font_name)
@@ -79,7 +68,6 @@ class SettingsDialog(QDialog):
             self.font_family_combo.setCurrentIndex(index)
         font_layout.addRow("フォント:", self.font_family_combo)
         
-        # フォントサイズ
         self.font_size_slider = QSlider(Qt.Horizontal)
         self.font_size_slider.setRange(12, 48)
         self.font_size_slider.setValue(self.settings["font_size"])
@@ -90,7 +78,6 @@ class SettingsDialog(QDialog):
         font_layout.addRow("フォントサイズ:", self.font_size_slider)
         font_layout.addRow("", self.font_size_label)
         
-        # フォントの太さ
         self.font_weight_combo = QComboBox()
         self.font_weight_combo.addItem("標準", 50)
         self.font_weight_combo.addItem("太字", 75)
@@ -101,7 +88,6 @@ class SettingsDialog(QDialog):
             self.font_weight_combo.setCurrentIndex(index)
         font_layout.addRow("フォントの太さ:", self.font_weight_combo)
         
-        # 影の距離
         self.font_shadow_slider = QSlider(Qt.Horizontal)
         self.font_shadow_slider.setRange(0, 5)
         self.font_shadow_slider.setValue(self.settings["font_shadow"])
@@ -112,7 +98,6 @@ class SettingsDialog(QDialog):
         font_layout.addRow("フォントの影:", self.font_shadow_slider)
         font_layout.addRow("", self.font_shadow_label)
         
-        # 影の方向
         self.font_shadow_direction_combo = QComboBox()
         self.font_shadow_direction_combo.addItem("右下", "bottom-right")
         self.font_shadow_direction_combo.addItem("右上", "top-right")
@@ -124,18 +109,16 @@ class SettingsDialog(QDialog):
             self.font_shadow_direction_combo.setCurrentIndex(index)
         else:
             print(f"影の方向: {shadow_direction} が見つかりませんでした。デフォルト 'bottom-right' を使用")
-            self.font_shadow_direction_combo.setCurrentIndex(0)  # "右下" に設定
+            self.font_shadow_direction_combo.setCurrentIndex(0)
         font_layout.addRow("影の方向:", self.font_shadow_direction_combo)
         
-        # 影の色
         self.font_shadow_color_button = QPushButton()
         self.font_shadow_color_button.setAutoFillBackground(True)
         shadow_color = self.settings.get("font_shadow_color", "#000000")
-        self.update_shadow_color_button(shadow_color)  # 保存された値を反映
+        self.update_shadow_color_button(shadow_color)
         self.font_shadow_color_button.clicked.connect(self.select_font_shadow_color)
         font_layout.addRow("影の色:", self.font_shadow_color_button)
         
-        # フォント色
         self.font_color_button = QPushButton()
         self.font_color_button.setAutoFillBackground(True)
         self.update_color_button(self.settings["font_color"])
@@ -149,12 +132,11 @@ class SettingsDialog(QDialog):
         display_group = QGroupBox("表示設定")
         display_form = QFormLayout()
         
-        # コメント速度（2.0〜15.0秒、0.1秒刻み）
         self.comment_speed_slider = QSlider(Qt.Horizontal)
-        self.comment_speed_slider.setRange(20, 150)  # 2.0〜15.0秒を10倍した値（整数で扱う）
-        self.comment_speed_slider.setValue(int(self.settings["comment_speed"] * 10))  # 現在の値を10倍して設定
+        self.comment_speed_slider.setRange(20, 150)
+        self.comment_speed_slider.setValue(int(self.settings["comment_speed"] * 10))
         self.comment_speed_slider.setTickPosition(QSlider.TicksBelow)
-        self.comment_speed_slider.setTickInterval(5)  # 0.5秒刻み
+        self.comment_speed_slider.setTickInterval(5)
         self.comment_speed_label = QLabel(f"{self.settings['comment_speed']:.1f}秒")
         self.comment_speed_slider.valueChanged.connect(self.update_comment_speed_label)
         display_form.addRow("コメント速度:", self.comment_speed_slider)
@@ -184,7 +166,13 @@ class SettingsDialog(QDialog):
         display_form.addRow("ウィンドウ透明度:", self.window_opacity_slider)
         display_form.addRow("", self.window_opacity_label)
         
-        # 新しいチェックボックスを追加
+        # 修正: コメント行間を QSpinBox に変更
+        self.spacing_spin = QSpinBox()
+        self.spacing_spin.setRange(0, 40)  # 0px から 40px
+        self.spacing_spin.setValue(self.settings["spacing"])
+        self.spacing_spin.setSuffix("px")  # 単位を表示
+        display_form.addRow("コメント行間:", self.spacing_spin)
+        
         self.hide_anchor_checkbox = QCheckBox("アンカー（>>）を含むコメントを表示しない")
         self.hide_anchor_checkbox.setChecked(self.settings.get("hide_anchor_comments", False))
         display_form.addRow("", self.hide_anchor_checkbox)
@@ -288,7 +276,7 @@ class SettingsDialog(QDialog):
         self.font_shadow_color_button.setText(color_name)
 
     def update_comment_speed_label(self, value):
-        self.comment_speed_label.setText(f"{value / 10.0:.1f}秒")  # 10で割って小数点以下1桁で表示
+        self.comment_speed_label.setText(f"{value / 10.0:.1f}秒")
     
     def update_window_opacity_label(self, value):
         self.window_opacity_label.setText(f"{value}%")
@@ -314,9 +302,9 @@ class SettingsDialog(QDialog):
         self.settings["font_size"] = self.font_size_slider.value()
         self.settings["font_weight"] = self.font_weight_combo.currentData()
         self.settings["font_shadow"] = self.font_shadow_slider.value()
-        self.settings["font_color"] = self.font_color_button.text()  # QColor.name() から直接取得
-        self.settings["font_family"] = self.font_family_combo.currentData()  # フォントファミリーを保存
-        self.settings["comment_speed"] = self.comment_speed_slider.value() / 10.0  # 浮動小数点数として保存
+        self.settings["font_color"] = self.font_color_button.text()
+        self.settings["font_family"] = self.font_family_combo.currentData()
+        self.settings["comment_speed"] = self.comment_speed_slider.value() / 10.0
         self.settings["display_position"] = self.display_position_combo.currentData()
         self.settings["max_comments"] = self.max_comments_spin.value()
         self.settings["window_opacity"] = self.window_opacity_slider.value() / 100.0
@@ -326,9 +314,9 @@ class SettingsDialog(QDialog):
         self.settings["next_thread_search_duration"] = self.next_thread_search_duration_spin.value()
         self.settings["font_shadow_direction"] = self.font_shadow_direction_combo.currentData()
         self.settings["font_shadow_color"] = self.font_shadow_color_button.text()
-        # 新しい設定を保存
         self.settings["hide_anchor_comments"] = self.hide_anchor_checkbox.isChecked()
         self.settings["hide_url_comments"] = self.hide_url_checkbox.isChecked()
+        self.settings["spacing"] = self.spacing_spin.value()  # 修正: QSpinBox から取得
         
         try:
             settings_dir = os.path.expanduser("~/.edge_live_viewer")
@@ -349,7 +337,6 @@ class SettingsDialog(QDialog):
             if os.path.exists(settings_file):
                 with open(settings_file, "r", encoding="utf-8") as f:
                     loaded_settings = json.load(f)
-                # 既存の self.settings にマージ
                 self.settings.update(loaded_settings)
         except Exception as e:
             print(f"設定の読み込みに失敗しました: {str(e)}")
@@ -373,8 +360,9 @@ class SettingsDialog(QDialog):
                 "playback_speed": 1.0,
                 "auto_next_thread": True,
                 "next_thread_search_duration": 180,
-                "hide_anchor_comments": False,  # 新規追加
-                "hide_url_comments": False      # 新規追加
+                "hide_anchor_comments": False,
+                "hide_url_comments": False,
+                "spacing": 20
             }
             
             self.font_size_slider.setValue(self.settings["font_size"])
@@ -403,6 +391,7 @@ class SettingsDialog(QDialog):
                 self.font_family_combo.setCurrentIndex(index)
             self.hide_anchor_checkbox.setChecked(self.settings["hide_anchor_comments"])
             self.hide_url_checkbox.setChecked(self.settings["hide_url_comments"])
+            self.spacing_spin.setValue(self.settings["spacing"])  # 修正: QSpinBox にリセット
 
 if __name__ == "__main__":
     import sys

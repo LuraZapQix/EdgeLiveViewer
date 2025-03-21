@@ -375,7 +375,8 @@ class MainWindow(QMainWindow):
             "overlay_width": 600,
             "overlay_height": 800,
             "hide_anchor_comments": False,
-            "hide_url_comments": False
+            "hide_url_comments": False,
+            "spacing": 10
         }
         
         try:
@@ -383,7 +384,6 @@ class MainWindow(QMainWindow):
             if os.path.exists(settings_file):
                 with open(settings_file, "r", encoding="utf-8") as f:
                     loaded_settings = json.load(f)
-                
                 for key, value in loaded_settings.items():
                     if key in default_settings:
                         default_settings[key] = value
