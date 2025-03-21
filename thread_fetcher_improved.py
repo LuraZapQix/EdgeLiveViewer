@@ -76,7 +76,8 @@ class ThreadFetcher(QThread):
             try:
                 thread_id_dat, title_res = line.split("<>", 1)
                 thread_id = thread_id_dat.replace(".dat", "")
-                title_res_match = re.search(r'(.*?)\s*\((\d+)\)', title_res)
+                # 修正: 最後の括弧内の数字をレス数として扱うように正規表現を変更
+                title_res_match = re.search(r'(.*)\s*\((\d+)\)$', title_res)
                 if not title_res_match:
                     continue
                 
