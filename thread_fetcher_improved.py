@@ -9,6 +9,7 @@ from datetime import datetime
 import requests
 from concurrent.futures import ThreadPoolExecutor
 from PyQt5.QtCore import QThread, pyqtSignal
+import difflib  # 類似度計算のために追加
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('ThreadFetcher')
@@ -254,7 +255,7 @@ class NextThreadFinder(QThread):
             self.search_finished.emit(False)
     
     def find_next_thread(self):
-        """次スレを検索するロジック"""
+        """次スレを検索するロジック（Chmateの次スレ作成ロジックを参考）"""
         try:
             url = "https://bbs.eddibb.cc/liveedge/subject.txt"
             response = requests.get(url, timeout=5)
@@ -262,49 +263,80 @@ class NextThreadFinder(QThread):
             
             lines = response.text.splitlines()
             
-            # 現在のタイトルの先頭10文字を検索キーとして使用
-            prefix = self.thread_title[:min(10, len(self.thread_title))]
-            logger.info(f"次スレ検索条件: 先頭10文字 '{prefix}' に一致")
+            # 現在のタイトルの数字を抽出
+            current_number, has_number = self.extract_last_number(self.thread_title)
+            logger.info(f"現在のスレッド: {self.thread_title}, 末尾の数字: {current_number if has_number else 'なし'}")
+            
+            # 候補スレッドを格納するリスト
+            candidates = []
             
             for line in lines:
                 if not line:
                     continue
                 thread_id_dat, title_res = line.split("<>", 1)
                 thread_id = thread_id_dat.replace(".dat", "")
-                title = title_res.split(" (")[0]
+                title = html.unescape(title_res.split(" (")[0])  # HTMLエンティティをデコード
                 
-                if title.startswith(prefix):
-                    # ★形式のパート番号を抽出（後ろに任意の文字列があってもOK）
-                    part_match_star = re.search(r'★(\d+)(?:\s+.*)?$', title)
-                    # Part.形式のパート番号を抽出（後ろに任意の文字列があってもOK）
-                    part_match_part = re.search(r'Part\.(\d+)(?:\s+.*)?$', title)
-                    
-                    # 現在のスレッドのパート番号を取得
-                    current_part_match_star = re.search(r'★(\d+)(?:\s+.*)?$', self.thread_title)
-                    current_part_match_part = re.search(r'Part\.(\d+)(?:\s+.*)?$', self.thread_title)
-                    
-                    if current_part_match_star:
-                        current_part = int(current_part_match_star.group(1))
-                    elif current_part_match_part:
-                        current_part = int(current_part_match_part.group(1))
-                    else:
-                        current_part = 1  # パート番号がない場合、デフォルトで1
-                    
-                    # 次スレ候補のパート番号を取得
-                    if part_match_star:
-                        next_part = int(part_match_star.group(1))
-                    elif part_match_part:
-                        next_part = int(part_match_part.group(1))
-                    else:
-                        next_part = 1  # パート番号がない場合、デフォルトで1
-                    
-                    # 現在のスレッドと異なるIDかつパート番号が大きい場合、次スレと判定
-                    if thread_id != self.thread_id and next_part > current_part:
-                        return {
-                            "id": thread_id,
-                            "title": title
-                        }
-            return None
+                if thread_id == self.thread_id:
+                    continue
+                
+                # タイトルの類似度を計算
+                similarity = difflib.SequenceMatcher(None, self.thread_title, title).ratio()
+                
+                # 類似度が0.5以上の場合に候補として検討
+                if similarity >= 0.5:
+                    next_number, _ = self.extract_last_number(title)
+                    candidates.append({
+                        "id": thread_id,
+                        "title": title,
+                        "similarity": similarity,
+                        "number": next_number
+                    })
+            
+            if not candidates:
+                logger.info("類似度0.5以上のスレッドが見つかりませんでした")
+                return None
+            
+            # 次スレの期待される数字を計算
+            expected_numbers = []
+            if not has_number:
+                # 数字がない場合、次スレは「★2」「Part.2」「Part2」を想定
+                expected_numbers = [2]
+            else:
+                # 数字がある場合、+1した値と「元の数字 + ★2」を想定
+                expected_numbers = [current_number + 1]
+                # ユーザー修正パターン（例: 27 → 27 ★2）
+                star_suffix_match = re.search(r'★(\d+)$', self.thread_title)
+                if not star_suffix_match:
+                    expected_numbers.append(current_number)  # 元の数字を保持して★2を後でチェック
+            
+            # 候補から次スレを選択
+            valid_candidates = []
+            for candidate in candidates:
+                next_num = candidate["number"]
+                if next_num in expected_numbers:
+                    valid_candidates.append(candidate)
+                elif not has_number and next_num == 2:
+                    # 数字がない場合、★2, Part.2, Part2 を許容
+                    if re.search(r'(★2|Part\.2|Part2)(?:\s+.*)?$', candidate["title"]):
+                        valid_candidates.append(candidate)
+                elif has_number and not star_suffix_match:
+                    # ユーザー修正パターン: 元の数字 + ★2
+                    star_match = re.search(r'★(\d+)$', candidate["title"])
+                    if star_match and int(star_match.group(1)) == 2 and re.search(str(current_number), candidate["title"]):
+                        valid_candidates.append(candidate)
+            
+            if not valid_candidates:
+                logger.info(f"期待される数字 {expected_numbers} に一致するスレッドが見つかりませんでした")
+                return None
+            
+            # 最も類似度が高い候補を選択
+            best_candidate = max(valid_candidates, key=lambda c: c["similarity"])
+            logger.info(f"次スレを発見しました: {best_candidate['title']} (ID: {best_candidate['id']}, 類似度: {best_candidate['similarity']:.2f})")
+            return {
+                "id": best_candidate["id"],
+                "title": best_candidate["title"]
+            }
         
         except requests.RequestException as e:
             logger.error(f"subject.txt の取得に失敗しました: {str(e)}")
@@ -312,6 +344,16 @@ class NextThreadFinder(QThread):
         except Exception as e:
             logger.error(f"次スレ検索中にエラーが発生しました: {str(e)}")
             return None
+    
+    def extract_last_number(self, title):
+        """タイトルから末尾に最も近い数字を抽出"""
+        # 末尾に近い整数または小数を検索
+        number_match = re.findall(r'(\d*\.\d+|\d+)', title)
+        if number_match:
+            # 最後の数字を取得し、浮動小数点数として変換
+            last_number = float(number_match[-1])
+            return last_number, True
+        return 0, False  # 数字がない場合は0とFalseを返す
     
     def stop(self):
         self.running = False
