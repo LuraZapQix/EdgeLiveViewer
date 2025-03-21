@@ -62,6 +62,43 @@ class CommentOverlayWindow(QWidget):
 
         self.main_window = None
 
+    def add_system_message(self, message, message_type="generic"):
+        """システムメッセージをコメントとして追加"""
+        font = QFont(self.font_family)
+        font.setPointSize(self.font_size)
+        font.setWeight(self.font_weight)
+        font_metrics = QFontMetrics(font)
+        
+        text_width = font_metrics.width(message)
+        
+        # メッセージ種別に応じて高さを調整
+        if message_type == "thread_over_1000":
+            y_position = self.move_area_height + self.height() // 4  # 上部寄り（1/4の高さ）
+        elif message_type == "next_thread_connected":
+            y_position = self.move_area_height + self.height() // 2  # 中央寄り（1/2の高さ）
+        else:
+            y_position = self.move_area_height + self.height() // 3  # デフォルト（1/3の高さ）
+        
+        self.comment_id_counter += 1
+        comment_id = f"system_{int(time.time()*1000)}_{self.comment_id_counter}"
+        total_distance = self.width() + text_width
+        speed = total_distance / self.comment_speed
+        
+        comment_obj = {
+            'id': comment_id,
+            'text': message,
+            'x': float(self.width()),
+            'y': y_position,
+            'width': text_width,
+            'row': -1,  # 通常のコメントとは異なる位置を示す
+            'creation_time': QApplication.instance().property("comment_time") or 0,
+            'speed': speed
+        }
+        
+        self.comments.append(comment_obj)
+        logger.info(f"システムメッセージ追加: {message}, 種別: {message_type}, ID: {comment_id}, y: {y_position}")
+        self.update()
+
     def calculate_comment_rows(self):
         font = QFont(self.font_family)
         font.setPointSize(self.font_size)

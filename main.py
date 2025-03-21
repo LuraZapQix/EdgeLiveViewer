@@ -33,21 +33,28 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("エッジ実況ビュアー")
         self.setMinimumSize(800, 600)
         
+        # 設定の読み込み
         self.settings = self.load_settings()
         print("main.py の self.settings:", self.settings)  # デバッグ追加
         
-        app = QApplication.instance()
-        app.setProperty("main_window", self)
-
+        # overlay_window は初期化しない（接続時に作成）
+        self.overlay_window = None  # 初期値として None を設定
+        
         self.thread_fetcher = None
         self.comment_fetcher = None
         self.next_thread_finder = None
-        self.overlay_window = None
         
         self.current_thread_id = None
         self.current_thread_title = None
         
+        # UIの初期化
         self.init_ui()
+        
+        # アプリケーション全体のプロパティ設定
+        app = QApplication.instance()
+        app.setProperty("main_window", self)
+        
+        # 初期スレッド一覧の取得開始
         self.start_thread_fetcher_initial()
         self.show_tutorial_if_first_launch()
     
@@ -157,13 +164,14 @@ class MainWindow(QMainWindow):
         logger.info("スレッド一覧を更新しました")
     
     def start_thread_fetcher(self, thread_id, thread_title):
-        if self.comment_fetcher:
+        if self.comment_fetcher and self.comment_fetcher.isRunning():
             self.comment_fetcher.stop()
         
-        self.comment_fetcher = CommentFetcher(thread_id, thread_title)
+        self.comment_fetcher = CommentFetcher(thread_id, thread_title, self.settings["update_interval"])
         self.comment_fetcher.comments_fetched.connect(self.display_comments)
         self.comment_fetcher.thread_filled.connect(self.handle_thread_filled)
         self.comment_fetcher.error_occurred.connect(self.show_error)
+        self.comment_fetcher.thread_over_1000.connect(self.on_thread_over_1000)  # 1000超えのシグナル接続
         self.comment_fetcher.start()
         logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title})")
     
@@ -229,16 +237,16 @@ class MainWindow(QMainWindow):
             thread_title = self.get_thread_title(thread_id)
             if not thread_title:
                 thread_title, ok = QInputDialog.getText(self, "スレッドタイトル入力", 
-                                                       f"スレッド {thread_id} のタイトルが見つかりませんでした。\nタイトルを入力してください（例: 【何か】スレタイ★1）:")
+                                                    f"スレッド {thread_id} のタイトルが見つかりませんでした。\nタイトルを入力してください（例: 【何か】スレタイ★1）:")
                 if not ok or not thread_title:
                     thread_title = f"スレッド {thread_id}"
         
         self.current_thread_title = thread_title
         logger.info(f"スレッド接続 - ID: {thread_id}, タイトル: {thread_title}")
         
+        # overlay_window が存在しないか閉じている場合に作成して表示
         if not self.overlay_window or not self.overlay_window.isVisible():
-            self.overlay_window = CommentOverlayWindow(None)
-            self.overlay_window.main_window = self
+            self.overlay_window = CommentOverlayWindow(None)  # 親なしで作成
             self.overlay_window.update_settings(self.settings)
             self.overlay_window.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
             self.overlay_window.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -248,7 +256,7 @@ class MainWindow(QMainWindow):
             overlay_height = self.settings.get("overlay_height", 800)
             self.overlay_window.setGeometry(overlay_x, overlay_y, overlay_width, overlay_height)
             self.overlay_window.show()
-            logger.info(f"コメントオーバーレイウィンドウを新しく開きました: x={overlay_x}, y={overlay_y}, width={overlay_width}, height={overlay_height}")
+            logger.info(f"コメントオーバーレイウィンドウを開きました: x={overlay_x}, y={overlay_y}, width={overlay_width}, height={overlay_height}")
         else:
             logger.info("既存のコメントオーバーレイウィンドウを再利用します")
         
@@ -309,6 +317,7 @@ class MainWindow(QMainWindow):
         logger.info(f"次スレが見つかりました: {next_thread_id} - {next_thread_title}")
         
         self.connect_to_thread_by_id(next_thread_id, next_thread_title)
+        self.overlay_window.add_system_message(f"[{next_thread_title}] に接続しました", message_type="next_thread_connected")
         self.statusBar().showMessage(f"次スレ {next_thread_id} - {next_thread_title} に接続しました")
     
     def on_search_finished(self, success):
@@ -318,6 +327,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("次スレが見つかりませんでした")
         
         self.next_thread_finder = None
+    
+    def on_thread_over_1000(self, message):
+        """スレッドが1000を超えたときにメッセージを表示"""
+        self.overlay_window.add_system_message(message, message_type="thread_over_1000")
     
     def get_next_part(self, thread_title):
         part_match = re.search(r'★(\d+)$', thread_title)
@@ -348,7 +361,7 @@ class MainWindow(QMainWindow):
             "font_family": "MSP Gothic",
             "font_shadow_direction": "bottom-right",
             "font_shadow_color": "#000000",
-            "comment_speed": 6.0,  # デフォルトを6.0秒に変更
+            "comment_speed": 6.0,
             "display_position": "center",
             "max_comments": 40,
             "window_opacity": 0.8,

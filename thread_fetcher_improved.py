@@ -126,6 +126,7 @@ class CommentFetcher(QThread):
     comments_fetched = pyqtSignal(list)
     thread_filled = pyqtSignal(str, str)
     error_occurred = pyqtSignal(str)
+    thread_over_1000 = pyqtSignal(str)  # 追加: 1000レス超過を通知するシグナル
     
     def __init__(self, thread_id, thread_title="", update_interval=0.5, parent=None):
         super().__init__(parent)
@@ -133,7 +134,7 @@ class CommentFetcher(QThread):
         self.thread_title = thread_title
         self.update_interval = update_interval
         self.running = True
-        self.last_res_index = -1  # 最後に処理したインデックス（0始まり）
+        self.last_res_index = -1
         self.max_retries = 3
         self.retry_delay = 2
         self.is_first_fetch = True
@@ -172,19 +173,10 @@ class CommentFetcher(QThread):
                         date_match = re.search(r'(\d{4}/\d{2}/\d{2}\(\S+\) \d{2}:\d{2}:\d{2}\.\d+)', date_id)
                         date = date_match.group(1) if date_match else date_id
                         
-                        # デバッグ用に生データをログ出力
-                        logger.debug(f"生コメントテキスト: {text}")
-                        
-                        # まず <br> をスペースに変換（タグ除去より前）
                         text = text.replace('<br>', ' ')
-                        # その後に他のタグを除去
                         text = re.sub(r'<.*?>', '', text)
                         text = re.sub(r'!metadent:.*?$', '', text, flags=re.MULTILINE)
-                        # HTMLエンティティをデコード
                         text = html.unescape(text)
-                        
-                        # 処理後テキストをログ出力
-                        logger.debug(f"処理後コメントテキスト: {text}")
                         
                         new_comments.append({
                             'number': i + 1,
@@ -205,6 +197,7 @@ class CommentFetcher(QThread):
                 if len(lines) >= 1000:
                     logger.info(f"スレッド {self.thread_id} が1000レスに到達しました。次スレを探します。")
                     self.thread_filled.emit(self.thread_id, self.thread_title)
+                    self.thread_over_1000.emit(f"スレッド {self.thread_title} がレスに到達しました。")  # シグナル発行
                     break
                 
                 time.sleep(self.update_interval)
@@ -283,8 +276,8 @@ class NextThreadFinder(QThread):
                 # タイトルの類似度を計算
                 similarity = difflib.SequenceMatcher(None, self.thread_title, title).ratio()
                 
-                # 類似度が0.5以上の場合に候補として検討
-                if similarity >= 0.5:
+                # 類似度が0.3以上の場合に候補として検討
+                if similarity >= 0.3:
                     next_number, _ = self.extract_last_number(title)
                     candidates.append({
                         "id": thread_id,
@@ -294,7 +287,7 @@ class NextThreadFinder(QThread):
                     })
             
             if not candidates:
-                logger.info("類似度0.5以上のスレッドが見つかりませんでした")
+                logger.info("類似度0.3以上のスレッドが見つかりませんでした")
                 return None
             
             # 次スレの期待される数字を計算
