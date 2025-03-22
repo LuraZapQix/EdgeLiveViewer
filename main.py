@@ -35,11 +35,9 @@ class MainWindow(QMainWindow):
         
         # 設定の読み込み
         self.settings = self.load_settings()
-        print("main.py の self.settings:", self.settings)  # デバッグ追加
+        print("main.py の self.settings:", self.settings)
         
-        # overlay_window は初期化しない（接続時に作成）
-        self.overlay_window = None  # 初期値として None を設定
-        
+        self.overlay_window = None
         self.thread_fetcher = None
         self.comment_fetcher = None
         self.next_thread_finder = None
@@ -47,14 +45,11 @@ class MainWindow(QMainWindow):
         self.current_thread_id = None
         self.current_thread_title = None
         
-        # UIの初期化
         self.init_ui()
         
-        # アプリケーション全体のプロパティ設定
         app = QApplication.instance()
         app.setProperty("main_window", self)
         
-        # 初期スレッド一覧の取得開始
         self.start_thread_fetcher_initial()
         self.show_tutorial_if_first_launch()
     
@@ -76,6 +71,7 @@ class MainWindow(QMainWindow):
         
         self.tab_widget = QTabWidget()
         
+        # スレッド一覧タブ
         thread_tab = QWidget()
         thread_layout = QVBoxLayout(thread_tab)
         
@@ -104,30 +100,29 @@ class MainWindow(QMainWindow):
         
         self.tab_widget.addTab(thread_tab, "スレッド一覧")
         
-        playback_tab = QWidget()
-        playback_layout = QVBoxLayout(playback_tab)
+        # スレッド詳細タブ
+        self.detail_tab = QWidget()
+        detail_layout = QVBoxLayout(self.detail_tab)
         
-        playback_controls = QHBoxLayout()
-        self.playback_speed_combo = QComboBox()
-        self.playback_speed_combo.addItem("0.5倍速", 0.5)
-        self.playback_speed_combo.addItem("1.0倍速", 1.0)
-        self.playback_speed_combo.addItem("1.5倍速", 1.5)
-        self.playback_speed_combo.addItem("2.0倍速", 2.0)
-        self.playback_speed_combo.setCurrentIndex(1)
+        self.thread_title_label = QLabel("接続中のスレッド: 未接続")
+        self.thread_title_label.setAlignment(Qt.AlignCenter)
+        detail_layout.addWidget(self.thread_title_label)
         
-        self.play_button = QPushButton("再生")
-        self.play_button.clicked.connect(self.toggle_playback)
-        self.play_button.setEnabled(False)
+        self.detail_table = QTableWidget(0, 4)
+        self.detail_table.setHorizontalHeaderLabels(["番号", "本文", "名前", "ID"])
+        self.detail_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # 本文をストレッチ
+        self.detail_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.detail_table.setSelectionBehavior(QTableWidget.SelectRows)
+        # 行番号（インデックス）を非表示に
+        self.detail_table.verticalHeader().setVisible(False)
+        # 初期列幅を設定
+        self.detail_table.setColumnWidth(0, 40)  # レス番
+        self.detail_table.setColumnWidth(2, 120)  # 名前
+        self.detail_table.setColumnWidth(3, 100)  # ID
+        # 本文は Stretch のまま、ウィンドウサイズで調整
+        detail_layout.addWidget(self.detail_table)
         
-        playback_controls.addWidget(QLabel("再生速度:"))
-        playback_controls.addWidget(self.playback_speed_combo)
-        playback_controls.addWidget(self.play_button)
-        playback_controls.addStretch()
-        
-        playback_layout.addLayout(playback_controls)
-        playback_layout.addStretch()
-        
-        self.tab_widget.addTab(playback_tab, "過去ログ再生")
+        self.tab_widget.addTab(self.detail_tab, "スレッド詳細")
         
         main_layout.addWidget(self.tab_widget)
         
@@ -167,13 +162,19 @@ class MainWindow(QMainWindow):
         if self.comment_fetcher and self.comment_fetcher.isRunning():
             self.comment_fetcher.stop()
         
-        playback_speed = self.settings.get("playback_speed", 1.0)  # デフォルト1.0倍速
+        playback_speed = self.settings.get("playback_speed", 1.0)
         self.comment_fetcher = CommentFetcher(thread_id, thread_title, self.settings["update_interval"], is_past_thread, playback_speed)
         self.comment_fetcher.comments_fetched.connect(self.display_comments)
         self.comment_fetcher.thread_filled.connect(self.handle_thread_filled)
         self.comment_fetcher.error_occurred.connect(self.show_error)
         self.comment_fetcher.thread_over_1000.connect(self.on_thread_over_1000)
         self.comment_fetcher.start()
+        
+        # スレッド詳細タブを更新
+        self.current_thread_id = thread_id
+        self.current_thread_title = thread_title
+        self.thread_title_label.setText(f"接続中のスレッド: {thread_title}")
+        self.detail_table.setRowCount(0)  # 接続時にテーブルをクリア
         logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title}, 過去ログ: {is_past_thread}, 再生速度: {playback_speed}x)")
     
     def update_thread_list(self, threads):
@@ -232,27 +233,24 @@ class MainWindow(QMainWindow):
         if self.comment_fetcher is not None:
             self.comment_fetcher.stop()
         
-        # .dat ファイルの存在確認
         if not self.check_thread_exists(thread_id):
             self.show_error(f"スレッド {thread_id} は存在しません（.dat ファイルが見つかりません）。")
             logger.warning(f"スレッド {thread_id} の .dat ファイルが存在しないため、接続を中止します。")
             self.statusBar().showMessage(f"スレッド {thread_id} は存在しません")
             return
         
-        # subject.txt からタイトルを取得、失敗してもデフォルトタイトルで続行
-        is_past_thread = False  # 過去ログフラグ
+        is_past_thread = False
         if not thread_title:
             thread_title = self.get_thread_title(thread_id)
             if not thread_title:
                 thread_title = f"スレッド {thread_id} (過去ログ)"
-                is_past_thread = True  # subject.txt にない場合、過去ログと判定
+                is_past_thread = True
                 logger.info(f"スレッド {thread_id} は subject.txt にありません。過去ログとして接続します。")
         
         self.current_thread_id = thread_id
         self.current_thread_title = thread_title
         logger.info(f"スレッド接続 - ID: {thread_id}, タイトル: {thread_title}")
         
-        # オーバーレイウィンドウの準備
         if not self.overlay_window or not self.overlay_window.isVisible():
             self.overlay_window = CommentOverlayWindow(None)
             self.overlay_window.update_settings(self.settings)
@@ -269,10 +267,8 @@ class MainWindow(QMainWindow):
             logger.info("既存のコメントオーバーレイウィンドウを再利用します")
         
         self.start_thread_fetcher(thread_id, thread_title, is_past_thread=is_past_thread)
-        
-        self.play_button.setEnabled(True)
         self.statusBar().showMessage(f"スレッド {thread_id} - {thread_title} に接続しました")
-        
+    
     def check_thread_exists(self, thread_id):
         try:
             url = f"https://bbs.eddibb.cc/liveedge/dat/{thread_id}.dat"
@@ -309,13 +305,35 @@ class MainWindow(QMainWindow):
         QApplication.instance().setProperty("comment_time", time.time())
         logger.info(f"表示対象のコメント数: {len(comments)}")
         
+        # オーバーレイにコメントを追加
         for comment in comments:
             self.overlay_window.add_comment(comment)
+        
+        # スレッド詳細タブを更新
+        current_row_count = self.detail_table.rowCount()
+        for comment in comments:
+            name = comment["name"]
+            if "</b>(" in name:  # ワッチョイ付き
+                base_name, wacchoi = name.split("</b>(")
+                wacchoi = wacchoi.rstrip(")<b>")
+                formatted_name = f"{base_name}({wacchoi})"
+            else:  # ワッチョイなし
+                formatted_name = name
+            
+            self.detail_table.insertRow(current_row_count)
+            self.detail_table.setItem(current_row_count, 0, QTableWidgetItem(str(comment["number"])))
+            self.detail_table.setItem(current_row_count, 1, QTableWidgetItem(comment["text"]))
+            self.detail_table.setItem(current_row_count, 2, QTableWidgetItem(formatted_name))
+            self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
+            current_row_count += 1
+        
+        # 列幅調整を削除し、スクロールのみ実行
+        self.detail_table.scrollToBottom()  # 最新レスに自動スクロール
     
     def handle_thread_filled(self, thread_id, thread_title):
         logger.info(f"スレッド {thread_id} が埋まりました。")
         
-        if self.settings.get("auto_next_thread", True):  # 自動次スレ検出が有効の場合のみ
+        if self.settings.get("auto_next_thread", True):
             logger.info("次スレを検索します")
             search_duration = self.settings.get("next_thread_search_duration", 180)
             
@@ -351,15 +369,11 @@ class MainWindow(QMainWindow):
         self.next_thread_finder = None
     
     def on_thread_over_1000(self, message):
-        """スレッドが1000を超えたときにメッセージを表示"""
         self.overlay_window.add_system_message(message, message_type="thread_over_1000")
     
     def get_next_part(self, thread_title):
         part_match = re.search(r'★(\d+)$', thread_title)
         return int(part_match.group(1)) + 1 if part_match else 2
-    
-    def toggle_playback(self):
-        logger.info("過去ログ再生機能は未実装です")
     
     def show_settings(self):
         dialog = SettingsDialog(self)
