@@ -139,7 +139,7 @@ class CommentFetcher(QThread):
         self.thread_title = thread_title
         self.update_interval = update_interval
         self.is_past_thread = is_past_thread
-        self.playback_speed = max(1.0, min(2.0, playback_speed))  # 1.0～2.0に制限
+        self.playback_speed = max(1.0, min(2.0, playback_speed))  # 1.0～2.0に制限（変更なし）
         self.running = True
         self.last_res_index = -1
         self.max_retries = 3

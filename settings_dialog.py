@@ -222,13 +222,15 @@ class SettingsDialog(QDialog):
         playback_form = QFormLayout()
         
         self.playback_speed_combo = QComboBox()
-        self.playback_speed_combo.addItem("0.5倍速", 0.5)
-        self.playback_speed_combo.addItem("1.0倍速", 1.0)
-        self.playback_speed_combo.addItem("1.5倍速", 1.5)
-        self.playback_speed_combo.addItem("2.0倍速", 2.0)
-        index = 1
+        # 新しい選択肢: 1.0～2.0 を 0.05刻みで生成
+        speed_options = [round(1.0 + i * 0.05, 2) for i in range(21)]  # [1.0, 1.05, ..., 2.0]
+        for speed in speed_options:
+            self.playback_speed_combo.addItem(f"{speed}倍速", speed)
+        # 現在の設定値を選択
+        current_speed = self.settings.get("playback_speed", 1.0)
+        index = 0
         for i in range(self.playback_speed_combo.count()):
-            if abs(self.playback_speed_combo.itemData(i) - self.settings["playback_speed"]) < 0.01:
+            if abs(self.playback_speed_combo.itemData(i) - current_speed) < 0.01:
                 index = i
                 break
         self.playback_speed_combo.setCurrentIndex(index)
