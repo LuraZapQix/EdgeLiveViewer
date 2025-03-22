@@ -231,22 +231,27 @@ class MainWindow(QMainWindow):
         if self.comment_fetcher is not None:
             self.comment_fetcher.stop()
         
-        self.current_thread_id = thread_id
+        # .dat ファイルの存在確認
+        if not self.check_thread_exists(thread_id):
+            self.show_error(f"スレッド {thread_id} は存在しません（.dat ファイルが見つかりません）。")
+            logger.warning(f"スレッド {thread_id} の .dat ファイルが存在しないため、接続を中止します。")
+            self.statusBar().showMessage(f"スレッド {thread_id} は存在しません")
+            return
         
+        # subject.txt からタイトルを取得、失敗してもデフォルトタイトルで続行
         if not thread_title:
             thread_title = self.get_thread_title(thread_id)
             if not thread_title:
-                thread_title, ok = QInputDialog.getText(self, "スレッドタイトル入力", 
-                                                    f"スレッド {thread_id} のタイトルが見つかりませんでした。\nタイトルを入力してください（例: 【何か】スレタイ★1）:")
-                if not ok or not thread_title:
-                    thread_title = f"スレッド {thread_id}"
+                thread_title = f"スレッド {thread_id} (過去ログ)"
+                logger.info(f"スレッド {thread_id} は subject.txt にありません。過去ログとして接続します。")
         
+        self.current_thread_id = thread_id
         self.current_thread_title = thread_title
         logger.info(f"スレッド接続 - ID: {thread_id}, タイトル: {thread_title}")
         
-        # overlay_window が存在しないか閉じている場合に作成して表示
+        # オーバーレイウィンドウの準備
         if not self.overlay_window or not self.overlay_window.isVisible():
-            self.overlay_window = CommentOverlayWindow(None)  # 親なしで作成
+            self.overlay_window = CommentOverlayWindow(None)
             self.overlay_window.update_settings(self.settings)
             self.overlay_window.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
             self.overlay_window.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -265,6 +270,14 @@ class MainWindow(QMainWindow):
         self.play_button.setEnabled(True)
         self.statusBar().showMessage(f"スレッド {thread_id} - {thread_title} に接続しました")
     
+    def check_thread_exists(self, thread_id):
+        try:
+            url = f"https://bbs.eddibb.cc/liveedge/dat/{thread_id}.dat"
+            response = requests.get(url, timeout=5)
+            return response.status_code == 200
+        except:
+            return False
+        
     def get_thread_title(self, thread_id):
         try:
             url = "https://bbs.eddibb.cc/liveedge/subject.txt"
