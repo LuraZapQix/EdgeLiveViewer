@@ -288,38 +288,44 @@ class CommentOverlayWindow(QWidget):
         window_width = self.width()
         available_rows = []
         
-        # 既存のコメントをチェック
+        # 新しいコメントの速度を計算
+        total_distance_new = window_width + comment_width
+        speed_new = total_distance_new / self.comment_speed
+        
         for row in range(self.max_rows):
             if row in self.row_usage:
                 current_comment = self.row_usage[row]
-                # 現在のコメントの右端
                 right_edge = current_comment['x'] + current_comment['width']
-                # 次のコメントの開始位置は self.width()
-                gap = window_width - right_edge  # 隙間の距離
-                # 隙間が十分（例: 50px）あれば空いていると判断
-                if gap >= 50:  # 50px は調整可能
-                    available_rows.append(row)
+                current_speed = current_comment['speed']
+                
+                # 現在の隙間
+                gap = window_width - right_edge
+                
+                # 隙間と速度差を考慮
+                if gap > 100:  # 最小隙間100px（調整可能）
+                    if speed_new > current_speed:  # 新しいコメントが速い場合
+                        relative_speed = speed_new - current_speed
+                        time_to_catch = gap / relative_speed
+                        if time_to_catch >= 2.0:  # 2秒以上のマージン（緩和）
+                            available_rows.append(row)
+                    else:
+                        # 新しいコメントが遅い場合、追い付かないので利用可能
+                        available_rows.append(row)
             else:
-                # 未使用の行は即座に利用可能
                 available_rows.append(row)
         
         # 利用可能な行から選択
         if available_rows:
-            row = min(available_rows)  # 小さい行番号を優先
+            row = min(available_rows)
         else:
-            # 空きがない場合、最も早く終わるコメントの行を上書き
             row = min(self.row_usage.keys(), key=lambda k: self.row_usage[k]['x'] + self.row_usage[k]['width'])
         
-        # 新しいコメントを row_usage に登録
-        total_distance = window_width + comment_width
-        speed = total_distance / self.comment_speed
-        comment_obj = {
+        # 新しいコメントを仮登録
+        self.row_usage[row] = {
             'x': float(window_width),
             'width': comment_width,
-            'speed': speed,
-            # 他の属性は add_comment で設定
+            'speed': speed_new,
         }
-        self.row_usage[row] = comment_obj
         
         return row
 
@@ -381,7 +387,7 @@ class CommentOverlayWindow(QWidget):
             'speed': speed
         }
         self.comments.append(comment_obj)
-        self.row_usage[row] = comment_obj  # 完全なオブジェクトを登録
+        self.row_usage[row] = comment_obj  # 完全なオブジェクトで更新
         logger.info(f"コメント追加: {text}, ID: {comment_id}, y: {y_position}, speed: {speed}")
         self.update()
 
@@ -400,9 +406,14 @@ class CommentOverlayWindow(QWidget):
             if comment['x'] < -comment['width']:
                 to_remove.append(comment['id'])
         
+        # 削除と row_usage の同期
         for comment_id in to_remove:
             self.comments = [c for c in self.comments if c['id'] != comment_id]
-            # row_usage からの削除は隙間チェックに依存するため、ここでは削除しない
+            # row_usage から削除
+            for row, comment in list(self.row_usage.items()):
+                if comment['id'] == comment_id:
+                    del self.row_usage[row]
+                    break
         
         self.update()
 
