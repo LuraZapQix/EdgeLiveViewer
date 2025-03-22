@@ -163,17 +163,17 @@ class MainWindow(QMainWindow):
         self.thread_fetcher.start()
         logger.info("スレッド一覧を更新しました")
     
-    def start_thread_fetcher(self, thread_id, thread_title):
+    def start_thread_fetcher(self, thread_id, thread_title, is_past_thread=False):
         if self.comment_fetcher and self.comment_fetcher.isRunning():
             self.comment_fetcher.stop()
         
-        self.comment_fetcher = CommentFetcher(thread_id, thread_title, self.settings["update_interval"])
+        self.comment_fetcher = CommentFetcher(thread_id, thread_title, self.settings["update_interval"], is_past_thread=is_past_thread)
         self.comment_fetcher.comments_fetched.connect(self.display_comments)
         self.comment_fetcher.thread_filled.connect(self.handle_thread_filled)
         self.comment_fetcher.error_occurred.connect(self.show_error)
-        self.comment_fetcher.thread_over_1000.connect(self.on_thread_over_1000)  # 1000超えのシグナル接続
+        self.comment_fetcher.thread_over_1000.connect(self.on_thread_over_1000)
         self.comment_fetcher.start()
-        logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title})")
+        logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title}, 過去ログ: {is_past_thread})")
     
     def update_thread_list(self, threads):
         self.thread_table.setRowCount(0)
@@ -239,10 +239,12 @@ class MainWindow(QMainWindow):
             return
         
         # subject.txt からタイトルを取得、失敗してもデフォルトタイトルで続行
+        is_past_thread = False  # 過去ログフラグ
         if not thread_title:
             thread_title = self.get_thread_title(thread_id)
             if not thread_title:
                 thread_title = f"スレッド {thread_id} (過去ログ)"
+                is_past_thread = True  # subject.txt にない場合、過去ログと判定
                 logger.info(f"スレッド {thread_id} は subject.txt にありません。過去ログとして接続します。")
         
         self.current_thread_id = thread_id
@@ -265,11 +267,11 @@ class MainWindow(QMainWindow):
         else:
             logger.info("既存のコメントオーバーレイウィンドウを再利用します")
         
-        self.start_thread_fetcher(thread_id, thread_title)
+        self.start_thread_fetcher(thread_id, thread_title, is_past_thread=is_past_thread)
         
         self.play_button.setEnabled(True)
         self.statusBar().showMessage(f"スレッド {thread_id} - {thread_title} に接続しました")
-    
+        
     def check_thread_exists(self, thread_id):
         try:
             url = f"https://bbs.eddibb.cc/liveedge/dat/{thread_id}.dat"

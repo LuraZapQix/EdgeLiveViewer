@@ -123,23 +123,52 @@ class ThreadFetcher(QThread):
         self.running = False
         self.wait()
 
+from datetime import datetime
+import time
+import re
+
 class CommentFetcher(QThread):
     comments_fetched = pyqtSignal(list)
     thread_filled = pyqtSignal(str, str)
     error_occurred = pyqtSignal(str)
-    thread_over_1000 = pyqtSignal(str)  # 追加: 1000レス超過を通知するシグナル
+    thread_over_1000 = pyqtSignal(str)
     
-    def __init__(self, thread_id, thread_title="", update_interval=0.5, parent=None):
+    def __init__(self, thread_id, thread_title="", update_interval=0.5, is_past_thread=False, parent=None):
         super().__init__(parent)
         self.thread_id = thread_id
         self.thread_title = thread_title
         self.update_interval = update_interval
+        self.is_past_thread = is_past_thread
         self.running = True
         self.last_res_index = -1
         self.max_retries = 3
         self.retry_delay = 2
         self.is_first_fetch = True
         
+    def parse_datetime(self, date_str):
+        """投稿日時文字列をdatetimeオブジェクトに変換（日本語曜日対応）"""
+        try:
+            match = re.match(r'(\d{4}/\d{2}/\d{2}\(\S+\) \d{2}:\d{2}:\d{2}\.\d+)', date_str)
+            if not match:
+                logger.warning(f"日時形式が不正: {date_str}")
+                return None
+            date_part = match.group(1)
+            base, millis = date_part.rsplit('.', 1)
+            millis = millis.ljust(6, '0')
+            normalized_date = re.sub(r'\(\S+\)', '', f"{base}.{millis}")
+            return datetime.strptime(normalized_date, "%Y/%m/%d %H:%M:%S.%f")
+        except ValueError as e:
+            logger.warning(f"日時解析に失敗: {date_str}, エラー: {str(e)}")
+            return None
+    
+    def safe_sleep(self, duration):
+        """中断可能なスリープ"""
+        elapsed = 0
+        step = 0.1  # 100msごとにチェック
+        while elapsed < duration and self.running:
+            time.sleep(min(step, duration - elapsed))
+            elapsed += step
+    
     def run(self):
         retry_count = 0
         
@@ -152,8 +181,14 @@ class CommentFetcher(QThread):
                 lines = response.text.split('\n')
                 new_comments = []
                 
-                if self.is_first_fetch and len(lines) > 5:
-                    start_index = max(0, len(lines) - 5)
+                if self.is_first_fetch:
+                    if self.is_past_thread:
+                        start_index = 0
+                        logger.info(f"過去ログ再生: スレッド {self.thread_id} の全コメントを取得（総数: {len(lines)}）")
+                    elif len(lines) > 5:
+                        start_index = max(0, len(lines) - 5)
+                    else:
+                        start_index = 0
                 else:
                     start_index = self.last_res_index + 1
                 
@@ -184,24 +219,48 @@ class CommentFetcher(QThread):
                             'name': name,
                             'date': date,
                             'id': user_id,
-                            'text': text
+                            'text': text,
+                            'timestamp': self.parse_datetime(date)
                         })
                         self.last_res_index = i
                 
                 if new_comments:
-                    logger.info(f"取得した新コメント数: {len(new_comments)}, 開始インデックス: {start_index}, 総コメント数: {len(lines)}")
-                    self.comments_fetched.emit(new_comments)
+                    if self.is_past_thread and self.is_first_fetch:
+                        base_time = new_comments[0]['timestamp']
+                        if not base_time:
+                            logger.error(f"基準タイムスタンプが取得できませんでした。最初のコメント: {new_comments[0]['date']}")
+                            self.comments_fetched.emit(new_comments)
+                        else:
+                            prev_time = base_time
+                            for comment in new_comments:
+                                if not self.running:  # スレッド終了チェック
+                                    break
+                                if not comment['timestamp']:
+                                    logger.warning(f"タイムスタンプが取得できません: レス番号 {comment['number']}, 日時: {comment['date']}")
+                                    self.comments_fetched.emit([comment])
+                                    continue
+                                time_diff = (comment['timestamp'] - prev_time).total_seconds()
+                                if time_diff > 0:
+                                    self.safe_sleep(time_diff)  # 中断可能な待機
+                                if self.running:  # 送信前に再チェック
+                                    self.comments_fetched.emit([comment])
+                                    logger.info(f"過去ログコメント送信: レス番号 {comment['number']}, 時間差 {time_diff}秒, 投稿時間 {comment['date']}")
+                                    prev_time = comment['timestamp']
+                    else:
+                        logger.info(f"取得した新コメント数: {len(new_comments)}, 開始インデックス: {start_index}, 総コメント数: {len(lines)}")
+                        self.comments_fetched.emit(new_comments)
+                    
                     retry_count = 0
                     if self.is_first_fetch:
                         self.is_first_fetch = False
                 
-                if len(lines) >= 1000:
+                if len(lines) >= 1000 and not self.is_past_thread:
                     logger.info(f"スレッド {self.thread_id} が1000レスに到達しました。次スレを探します。")
                     self.thread_filled.emit(self.thread_id, self.thread_title)
-                    self.thread_over_1000.emit(f"スレッド： {self.thread_title} が1000レスに到達しました。")  # シグナル発行
+                    self.thread_over_1000.emit(f"スレッド： {self.thread_title} が1000レスに到達しました。")
                     break
                 
-                time.sleep(self.update_interval)
+                self.safe_sleep(self.update_interval)  # 更新間隔も中断可能に
                 
             except requests.exceptions.RequestException as e:
                 retry_count += 1
@@ -209,16 +268,17 @@ class CommentFetcher(QThread):
                 if retry_count >= self.max_retries:
                     self.error_occurred.emit(f"コメントの取得に失敗しました: {str(e)}")
                     retry_count = 0
-                time.sleep(self.retry_delay)
+                self.safe_sleep(self.retry_delay)
                 
             except Exception as e:
                 logger.error(f"コメントの取得中に予期しないエラーが発生しました: {str(e)}")
                 self.error_occurred.emit(f"コメントの取得に失敗しました: {str(e)}")
-                time.sleep(self.update_interval)
+                self.safe_sleep(self.update_interval)
     
     def stop(self):
         self.running = False
-        self.wait()
+        self.wait()  # スレッドが完全に終了するのを待つ
+        logger.info(f"CommentFetcher スレッド {self.thread_id} を停止しました")
 
 class NextThreadFinder(QThread):
     next_thread_found = pyqtSignal(dict)
