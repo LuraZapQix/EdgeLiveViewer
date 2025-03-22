@@ -39,7 +39,7 @@ class CommentOverlayWindow(QWidget):
         self.comment_queue = []
         self.flow_timer = QTimer(self)
         self.flow_timer.timeout.connect(self.flow_comment)
-        self.flow_timer.start(300)  # 300ms間隔で流す
+        self.flow_timer.start(200)  # 200ms間隔で流す
 
         self.move_area_height = 25
         self.close_button_size = 22
@@ -87,21 +87,22 @@ class CommentOverlayWindow(QWidget):
             logger.debug(f"コメントを流す: text={comment['text']}, 残りキュー={len(self.comment_queue)}")
 
     def add_system_message(self, message, message_type="generic"):
-        """システムメッセージをコメントとして追加"""
+        """システムメッセージをコメントとして追加（通常コメントと同じロジックで流す）"""
         font = QFont(self.font_family)
         font.setPointSize(self.font_size)
         font.setWeight(self.font_weight)
         font_metrics = QFontMetrics(font)
         
         text_width = font_metrics.width(message)
+        row = self.find_available_row(text_width)  # 通常の行判定を使用
         
-        # メッセージ種別に応じて高さを調整
-        if message_type == "thread_over_1000":
-            y_position = self.move_area_height + self.height() // 4  # 上部寄り（1/4の高さ）
-        elif message_type == "next_thread_connected":
-            y_position = self.move_area_height + self.height() // 2  # 中央寄り（1/2の高さ）
-        else:
-            y_position = self.move_area_height + self.height() // 3  # デフォルト（1/3の高さ）
+        line_height = font_metrics.height()
+        if self.display_position == "top":
+            y_position = self.move_area_height + row * self.row_height + line_height
+        elif self.display_position == "bottom":
+            y_position = self.height() - row * self.row_height - line_height
+        
+        y_position = max(line_height + self.move_area_height, min(y_position, self.height() - line_height))
         
         self.comment_id_counter += 1
         comment_id = f"system_{int(time.time()*1000)}_{self.comment_id_counter}"
@@ -114,13 +115,15 @@ class CommentOverlayWindow(QWidget):
             'x': float(self.width()),
             'y': y_position,
             'width': text_width,
-            'row': -1,  # 通常のコメントとは異なる位置を示す
+            'row': row,
             'creation_time': QApplication.instance().property("comment_time") or 0,
-            'speed': speed
+            'speed': speed,
+            'is_system': True  # システムメッセージフラグ
         }
         
         self.comments.append(comment_obj)
-        logger.info(f"システムメッセージ追加: {message}, 種別: {message_type}, ID: {comment_id}, y: {y_position}")
+        self.row_usage[row] = comment_obj  # 通常コメントと同じく row_usage に登録
+        logger.info(f"システムメッセージ追加: {message}, 種別: {message_type}, ID: {comment_id}, row: {row}, y: {y_position}")
         self.update()
 
     def calculate_comment_rows(self):
@@ -448,6 +451,12 @@ class CommentOverlayWindow(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.TextAntialiasing)
 
+        font = QFont(self.font_family)
+        font.setPointSize(self.font_size)
+        font.setWeight(self.font_weight)
+        painter.setFont(font)
+        font_metrics = QFontMetrics(font)
+
         if not self.is_minimized:
             painter.setBrush(QBrush(QColor(50, 50, 50, 100)))
             painter.setPen(QPen(QColor(255, 255, 255, 50), 1))
@@ -502,6 +511,13 @@ class CommentOverlayWindow(QWidget):
         for comment in self.comments:
             if comment['x'] + comment['width'] < 0 or comment['x'] > self.width():
                 continue
+
+            # システムメッセージの場合に背景を描画
+            if comment.get('is_system', False):
+                painter.setBrush(QBrush(QColor(255, 255, 0, 70)))  # 薄い黄色
+                painter.setPen(Qt.NoPen)
+                painter.drawRect(int(comment['x']) - 5, int(comment['y']) - font_metrics.ascent() - 5,
+                            comment['width'] + 10, font_metrics.height() + 10)
 
             if self.font_shadow > 0:
                 painter.setPen(self.font_shadow_color)
