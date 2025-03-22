@@ -297,19 +297,25 @@ class MainWindow(QMainWindow):
             self.overlay_window.add_comment(comment)
     
     def handle_thread_filled(self, thread_id, thread_title):
-        logger.info(f"スレッド {thread_id} が埋まりました。次スレを検索します")
+        logger.info(f"スレッド {thread_id} が埋まりました。")
         
-        search_duration = self.settings.get("next_thread_search_duration", 180)
-        
-        if self.next_thread_finder is not None:
-            self.next_thread_finder.stop()
-        
-        self.next_thread_finder = NextThreadFinder(thread_id, thread_title, search_duration)
-        self.next_thread_finder.next_thread_found.connect(self.on_next_thread_found)
-        self.next_thread_finder.search_finished.connect(self.on_search_finished)
-        self.next_thread_finder.start()
-        logger.info(f"次スレ検索を開始しました（検索時間: {search_duration}秒）")
-        self.statusBar().showMessage(f"スレッド {thread_id} が埋まりました。次スレを検索中...")
+        if self.settings.get("auto_next_thread", True):  # 自動次スレ検出が有効の場合のみ
+            logger.info("次スレを検索します")
+            search_duration = self.settings.get("next_thread_search_duration", 180)
+            
+            if self.next_thread_finder is not None:
+                self.next_thread_finder.stop()
+            
+            self.next_thread_finder = NextThreadFinder(thread_id, thread_title, search_duration)
+            self.next_thread_finder.next_thread_found.connect(self.on_next_thread_found)
+            self.next_thread_finder.search_finished.connect(self.on_search_finished)
+            self.next_thread_finder.start()
+            logger.info(f"次スレ検索を開始しました（検索時間: {search_duration}秒）")
+            self.statusBar().showMessage(f"スレッド {thread_id} が埋まりました。次スレを検索中...")
+        else:
+            logger.info("次スレの自動検索が無効化されています")
+            self.statusBar().showMessage(f"スレッド {thread_id} が埋まりました。次スレ検索は無効です")
+            self.overlay_window.add_system_message("次スレ検索は設定で無効化されています", message_type="auto_next_disabled")
     
     def on_next_thread_found(self, next_thread):
         next_thread_id = next_thread["id"]
