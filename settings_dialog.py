@@ -16,6 +16,9 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("設定")
         self.setMinimumWidth(500)
+        hint = self.sizeHint()
+        print(f"推奨サイズ: 幅={hint.width()}, 高さ={hint.height()}")
+        self.resize(500, hint.height())  # 幅は500、高さは推奨値に
         
         self.settings = parent.settings if parent is not None else {
             "font_size": 24,
