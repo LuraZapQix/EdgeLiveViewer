@@ -68,6 +68,8 @@ class CommentOverlayWindow(QWidget):
         self.ng_names = []
         self.ng_texts = []
 
+        self.row_usage = {}  # {row: comment_obj} に変更（以前は {row: end_time}）
+
     def add_system_message(self, message, message_type="generic"):
         """システムメッセージをコメントとして追加"""
         font = QFont(self.font_family)
@@ -283,26 +285,41 @@ class CommentOverlayWindow(QWidget):
         self.update()
 
     def find_available_row(self, comment_width):
-        current_time = QApplication.instance().property("comment_time") or 0
         window_width = self.width()
-        
         available_rows = []
+        
+        # 既存のコメントをチェック
         for row in range(self.max_rows):
             if row in self.row_usage:
-                end_time = self.row_usage[row]
-                if end_time < current_time:
-                    self.row_usage.pop(row)
+                current_comment = self.row_usage[row]
+                # 現在のコメントの右端
+                right_edge = current_comment['x'] + current_comment['width']
+                # 次のコメントの開始位置は self.width()
+                gap = window_width - right_edge  # 隙間の距離
+                # 隙間が十分（例: 50px）あれば空いていると判断
+                if gap >= 50:  # 50px は調整可能
                     available_rows.append(row)
             else:
+                # 未使用の行は即座に利用可能
                 available_rows.append(row)
         
+        # 利用可能な行から選択
         if available_rows:
-            row = min(available_rows)
+            row = min(available_rows)  # 小さい行番号を優先
         else:
-            row = min(self.row_usage.keys(), key=lambda k: self.row_usage[k])
+            # 空きがない場合、最も早く終わるコメントの行を上書き
+            row = min(self.row_usage.keys(), key=lambda k: self.row_usage[k]['x'] + self.row_usage[k]['width'])
         
-        display_time = (window_width + comment_width) / ((window_width + comment_width) / self.comment_speed)
-        self.row_usage[row] = current_time + display_time
+        # 新しいコメントを row_usage に登録
+        total_distance = window_width + comment_width
+        speed = total_distance / self.comment_speed
+        comment_obj = {
+            'x': float(window_width),
+            'width': comment_width,
+            'speed': speed,
+            # 他の属性は add_comment で設定
+        }
+        self.row_usage[row] = comment_obj
         
         return row
 
@@ -343,10 +360,8 @@ class CommentOverlayWindow(QWidget):
         
         line_height = font_metrics.height()
         if self.display_position == "top":
-            # 上部優先: 上から順に埋まる（変更なし）
             y_position = self.move_area_height + row * self.row_height + line_height
         elif self.display_position == "bottom":
-            # 下部優先: 下から順に上に埋まる
             y_position = self.height() - row * self.row_height - line_height
         
         y_position = max(line_height + self.move_area_height, min(y_position, self.height() - line_height))
@@ -366,6 +381,7 @@ class CommentOverlayWindow(QWidget):
             'speed': speed
         }
         self.comments.append(comment_obj)
+        self.row_usage[row] = comment_obj  # 完全なオブジェクトを登録
         logger.info(f"コメント追加: {text}, ID: {comment_id}, y: {y_position}, speed: {speed}")
         self.update()
 
@@ -386,8 +402,7 @@ class CommentOverlayWindow(QWidget):
         
         for comment_id in to_remove:
             self.comments = [c for c in self.comments if c['id'] != comment_id]
-            if comment_id in self.row_usage:
-                self.row_usage.pop(comment['row'])
+            # row_usage からの削除は隙間チェックに依存するため、ここでは削除しない
         
         self.update()
 
