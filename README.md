@@ -18,7 +18,7 @@
 ## インストール
 1. [Releasesページ](https://github.com/LuraZapQix/EdgeLiveViewer/releases)から最新版をダウンロード。
    - Windows: `EdgeLiveViewer.exe`
-   - Linux: `EdgeLiveViewer`
+   
 2. ファイルを任意の場所に保存。
 3. ダブルクリックで起動。
 
