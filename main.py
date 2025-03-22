@@ -423,11 +423,10 @@ class MainWindow(QMainWindow):
         QApplication.instance().setProperty("comment_time", time.time())
         logger.info(f"表示対象のコメント数: {len(comments)}")
         
-        # オーバーレイにコメントを追加
-        for comment in comments:
-            self.overlay_window.add_comment(comment)
+        # オーバーレイにコメントをキュー経由で追加
+        self.overlay_window.add_comment_batch(comments)  # 一括で add_comment から add_comment_batch に変更
         
-        # スレッド詳細タブを更新
+        # スレッド詳細タブを更新（変更なし）
         current_row_count = self.detail_table.rowCount()
         for comment in comments:
             name = comment["name"]
@@ -445,7 +444,6 @@ class MainWindow(QMainWindow):
             self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
             current_row_count += 1
         
-        # 列幅調整を削除し、スクロールのみ実行
         self.detail_table.scrollToBottom()  # 最新レスに自動スクロール
     
     def handle_thread_filled(self, thread_id, thread_title):

@@ -35,6 +35,12 @@ class CommentOverlayWindow(QWidget):
         self.hide_url_comments = False     # 新規追加
         self.spacing = 20  # 修正: デフォルト値として追加
 
+        # ここで comment_queue を初期化（追加）
+        self.comment_queue = []
+        self.flow_timer = QTimer(self)
+        self.flow_timer.timeout.connect(self.flow_comment)
+        self.flow_timer.start(300)  # 300ms間隔で流す
+
         self.move_area_height = 25
         self.close_button_size = 22
         self.minimize_button_size = 22
@@ -69,6 +75,16 @@ class CommentOverlayWindow(QWidget):
         self.ng_texts = []
 
         self.row_usage = {}  # {row: comment_obj} に変更（以前は {row: end_time}）
+
+    def add_comment_batch(self, comments):
+        self.comment_queue.extend(comments)
+        logger.debug(f"コメントをキューに追加: 数={len(comments)}, キュー長={len(self.comment_queue)}")
+
+    def flow_comment(self):
+        if self.comment_queue:
+            comment = self.comment_queue.pop(0)
+            self.add_comment(comment)
+            logger.debug(f"コメントを流す: text={comment['text']}, 残りキュー={len(self.comment_queue)}")
 
     def add_system_message(self, message, message_type="generic"):
         """システムメッセージをコメントとして追加"""
