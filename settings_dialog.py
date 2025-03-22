@@ -294,8 +294,8 @@ class SettingsDialog(QDialog):
         ng_name_group.setLayout(ng_name_layout)
         ng_layout.addWidget(ng_name_group)
         
-        # NG 本文文字列
-        ng_text_group = QGroupBox("NG 本文文字列")
+        # NG 本文
+        ng_text_group = QGroupBox("NG 本文")
         ng_text_layout = QVBoxLayout()
         self.ng_text_list = QListWidget()
         for ng_text in self.settings["ng_texts"]:

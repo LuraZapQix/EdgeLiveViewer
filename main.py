@@ -315,6 +315,12 @@ class MainWindow(QMainWindow):
             thread_id = self.thread_table.item(selected_row, 0).data(Qt.UserRole)
             thread_title = self.thread_table.item(selected_row, 0).text()
             
+            # 次スレ検索が動作中の場合、停止
+            if self.next_thread_finder is not None and self.next_thread_finder.isRunning():
+                self.next_thread_finder.stop()
+                logger.info(f"次スレ検索を停止しました（スレッド一覧から選択: {thread_id}）")
+                self.next_thread_finder = None
+            
             self.connect_to_thread_by_id(thread_id, thread_title)
     
     def connect_to_thread(self):
@@ -335,6 +341,12 @@ class MainWindow(QMainWindow):
         self.connect_to_thread_by_id(thread_id)
     
     def connect_to_thread_by_id(self, thread_id, thread_title=None):
+        # 次スレ検索が動作中の場合、停止
+        if self.next_thread_finder is not None and self.next_thread_finder.isRunning():
+            self.next_thread_finder.stop()
+            logger.info(f"次スレ検索を停止しました（新しいスレッド接続: {thread_id}）")
+            self.next_thread_finder = None
+        
         if self.comment_fetcher is not None:
             self.comment_fetcher.stop()
         
@@ -577,7 +589,8 @@ class MainWindow(QMainWindow):
     
     def show_error(self, message):
         logger.error(message)
-        QMessageBox.critical(self, "エラー", message)
+        # QMessageBox.critical(self, "エラー", message)  # 一時的にコメントアウト
+        self.statusBar().showMessage(f"エラー: {message[:50]}...")  # 短縮表示
     
     def closeEvent(self, event):
         if self.thread_fetcher is not None:

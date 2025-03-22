@@ -298,21 +298,25 @@ class NextThreadFinder(QThread):
         start_time = time.time()
         
         while self.running and (time.time() - start_time) < self.search_duration:
-            next_thread = self.find_next_thread()
-            if next_thread:
-                logger.info(f"次スレを発見しました: {next_thread['title']} (ID: {next_thread['id']})")
-                self.next_thread_found.emit(next_thread)
-                self.search_finished.emit(True)
-                return
-            logger.info("次スレが見つからなかったため、3秒後に再試行します")
-            time.sleep(3)  # 3秒間隔で再検索
+            try:
+                next_thread = self.find_next_thread()
+                if next_thread:
+                    logger.info(f"次スレを発見しました: {next_thread['title']} (ID: {next_thread['id']})")
+                    self.next_thread_found.emit(next_thread)
+                    self.search_finished.emit(True)
+                    return
+                logger.info("次スレが見つからなかったため、3秒後に再試行します")
+                time.sleep(3)
+            except Exception as e:
+                logger.error(f"次スレ検索中にエラーが発生しました: {str(e)}")
+                time.sleep(3)  # エラー時も継続
         
         if self.running:
             logger.info(f"次スレが見つかりませんでした: {self.thread_title}")
             self.search_finished.emit(False)
     
     def find_next_thread(self):
-        """次スレを検索するロジック（Chmateの次スレ作成ロジックを参考）"""
+        """次スレを検索するロジック（パターン１とパターン２の両方を考慮）"""
         try:
             url = "https://bbs.eddibb.cc/liveedge/subject.txt"
             response = requests.get(url, timeout=5)
@@ -347,7 +351,8 @@ class NextThreadFinder(QThread):
                         "id": thread_id,
                         "title": title,
                         "similarity": similarity,
-                        "number": next_number
+                        "number": next_number,
+                        "is_star": bool(re.search(r'★(\d+)$', title))  # ★付きかどうかを記録
                     })
             
             if not candidates:
@@ -360,31 +365,27 @@ class NextThreadFinder(QThread):
                 # 数字がない場合、次スレは「★2」「Part.2」「Part2」を想定
                 expected_numbers = [2]
             else:
-                # 数字がある場合、+1した値と「元の数字 + ★2」を想定
+                # 数字がある場合、+1した値を想定
                 expected_numbers = [current_number + 1]
-                # ユーザー修正パターン（例: 27 → 27 ★2）
-                star_suffix_match = re.search(r'★(\d+)$', self.thread_title)
-                if not star_suffix_match:
-                    expected_numbers.append(current_number)  # 元の数字を保持して★2を後でチェック
+                expected_numbers.append(current_number)  # 元の数字を保持
             
             # 候補から次スレを選択
             valid_candidates = []
             for candidate in candidates:
                 next_num = candidate["number"]
+                # パターン２: 数字が期待値に一致する場合
                 if next_num in expected_numbers:
                     valid_candidates.append(candidate)
+                # パターン１: 前スレに数字があっても「★1」「★2」を許容
+                elif candidate["is_star"] and next_num in [1, 2]:
+                    valid_candidates.append(candidate)
+                # 前スレに数字がない場合、「★2」「Part.2」「Part2」を許容
                 elif not has_number and next_num == 2:
-                    # 数字がない場合、★2, Part.2, Part2 を許容
                     if re.search(r'(★2|Part\.2|Part2)(?:\s+.*)?$', candidate["title"]):
-                        valid_candidates.append(candidate)
-                elif has_number and not star_suffix_match:
-                    # ユーザー修正パターン: 元の数字 + ★2
-                    star_match = re.search(r'★(\d+)$', candidate["title"])
-                    if star_match and int(star_match.group(1)) == 2 and re.search(str(current_number), candidate["title"]):
                         valid_candidates.append(candidate)
             
             if not valid_candidates:
-                logger.info(f"期待される数字 {expected_numbers} に一致するスレッドが見つかりませんでした")
+                logger.info(f"期待される数字 {expected_numbers} または次スレパターンに一致するスレッドが見つかりませんでした")
                 return None
             
             # 最も類似度が高い候補を選択
@@ -403,18 +404,29 @@ class NextThreadFinder(QThread):
             return None
     
     def extract_last_number(self, title):
-        """タイトルから末尾に最も近い数字を抽出"""
-        # 末尾に近い整数または小数を検索
+        """タイトルから末尾に最も近いスレッド進行に関連する数字を抽出"""
+        # 「★数字」「Part.数字」「Part数字」を優先的に検索
+        star_match = re.search(r'★(\d+)$', title)
+        part_dot_match = re.search(r'Part\.(\d+)$', title)
+        part_match = re.search(r'Part(\d+)$', title)
+        
+        if star_match:
+            return float(star_match.group(1)), True
+        elif part_dot_match:
+            return float(part_dot_match.group(1)), True
+        elif part_match:
+            return float(part_match.group(1)), True
+        
+        # 上記がない場合、最後の数字を返す
         number_match = re.findall(r'(\d*\.\d+|\d+)', title)
         if number_match:
-            # 最後の数字を取得し、浮動小数点数として変換
-            last_number = float(number_match[-1])
-            return last_number, True
+            return float(number_match[-1]), True
         return 0, False  # 数字がない場合は0とFalseを返す
     
     def stop(self):
         self.running = False
         self.wait()
+        logger.info(f"NextThreadFinder が停止しました（スレッドID: {self.thread_id}）")
 
 if __name__ == "__main__":
     import sys
