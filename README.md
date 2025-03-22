@@ -16,7 +16,7 @@
 - **Windows**: Windows 10/11（推奨）
 
 ## インストール
-1. [Releasesページ](https://github.com/LuraZapQix/EdgeLiveViewer/releases)から最新版をダウンロード。
+1. [Releasesページ](https://github.com/LuraZapQix/EdgeLiveViewer-Download/releases)から最新版をダウンロード。
    - Windows: `EdgeLiveViewer.exe`
    
 2. ファイルを任意の場所に保存。
