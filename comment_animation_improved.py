@@ -63,6 +63,10 @@ class CommentOverlayWindow(QWidget):
 
         self.main_window = None
 
+        self.ng_ids = []
+        self.ng_names = []
+        self.ng_texts = []
+
     def add_system_message(self, message, message_type="generic"):
         """システムメッセージをコメントとして追加"""
         font = QFont(self.font_family)
@@ -303,6 +307,19 @@ class CommentOverlayWindow(QWidget):
 
     def add_comment(self, comment):
         text = comment['text']
+        name = comment['name']
+        user_id = comment['id']
+        
+        # NGフィルタリング
+        if user_id in self.ng_ids:
+            logger.debug(f"NG IDでスキップ: {user_id}, コメント: {text}")
+            return
+        if any(ng_name in name for ng_name in self.ng_names):
+            logger.debug(f"NG 名前でスキップ: {name}, コメント: {text}")
+            return
+        if any(ng_text in text for ng_text in self.ng_texts):
+            logger.debug(f"NG 本文でスキップ: {text}")
+            return
         
         # フィルタリング条件
         if self.hide_anchor_comments and ">>" in text:
@@ -475,6 +492,11 @@ class CommentOverlayWindow(QWidget):
         self.hide_url_comments = settings.get("hide_url_comments", self.hide_url_comments)
         self.spacing = settings.get("spacing", self.spacing)
         
+        self.ng_ids = settings.get("ng_ids", [])
+        self.ng_names = settings.get("ng_names", [])
+        self.ng_texts = settings.get("ng_texts", [])
+        logger.info(f"NG設定を更新: IDs={self.ng_ids}, Names={self.ng_names}, Texts={self.ng_texts}")
+
         opacity = settings.get("window_opacity", 0.8)
         self.setWindowOpacity(opacity)
         

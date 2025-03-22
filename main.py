@@ -16,7 +16,8 @@ import logging
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QLabel, QPushButton, QLineEdit, 
                            QTabWidget, QTableWidget, QTableWidgetItem, 
-                           QHeaderView, QComboBox, QMessageBox, QInputDialog)
+                           QHeaderView, QComboBox, QMessageBox, QInputDialog, 
+                           QMenu, QDialog, QTextEdit)  # QTextEdit を追加
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QColor
 
@@ -26,6 +27,35 @@ from settings_dialog import SettingsDialog
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('EdgeLiveViewer')
+
+class NGTextDialog(QDialog):
+    """NGコメント/名前用のカスタムダイアログ"""
+    def __init__(self, initial_text, title, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(300)  # 横幅
+        
+        layout = QVBoxLayout()
+        
+        self.text_edit = QTextEdit()
+        self.text_edit.setPlainText(initial_text)
+        self.text_edit.setMinimumHeight(150)  #縦
+        layout.addWidget(self.text_edit)
+        
+        button_layout = QHBoxLayout()
+        self.ok_button = QPushButton("追加")
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button = QPushButton("キャンセル")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addStretch()
+        button_layout.addWidget(self.cancel_button)
+        button_layout.addWidget(self.ok_button)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+    
+    def get_text(self):
+        return self.text_edit.toPlainText().strip()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -110,16 +140,15 @@ class MainWindow(QMainWindow):
         
         self.detail_table = QTableWidget(0, 4)
         self.detail_table.setHorizontalHeaderLabels(["番号", "本文", "名前", "ID"])
-        self.detail_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # 本文をストレッチ
+        self.detail_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.detail_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.detail_table.setSelectionBehavior(QTableWidget.SelectRows)
-        # 行番号（インデックス）を非表示に
         self.detail_table.verticalHeader().setVisible(False)
-        # 初期列幅を設定
-        self.detail_table.setColumnWidth(0, 40)  # レス番
-        self.detail_table.setColumnWidth(2, 120)  # 名前
-        self.detail_table.setColumnWidth(3, 100)  # ID
-        # 本文は Stretch のまま、ウィンドウサイズで調整
+        self.detail_table.setColumnWidth(0, 40)
+        self.detail_table.setColumnWidth(2, 120)
+        self.detail_table.setColumnWidth(3, 100)
+        self.detail_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.detail_table.customContextMenuRequested.connect(self.show_context_menu)
         detail_layout.addWidget(self.detail_table)
         
         self.tab_widget.addTab(self.detail_tab, "スレッド詳細")
@@ -135,7 +164,83 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(button_layout)
         
         self.statusBar().showMessage("準備完了")
+
+    def show_context_menu(self, pos):
+        row = self.detail_table.currentRow()
+        if row < 0:
+            return
+        
+        menu = QMenu(self)
+        
+        ng_id = self.detail_table.item(row, 3).text()  # ID列
+        ng_text = self.detail_table.item(row, 1).text().strip()  # 本文列
+        ng_name = self.detail_table.item(row, 2).text()  # 名前列
+        
+        add_id_action = menu.addAction("NG IDに追加する")
+        add_comment_action = menu.addAction("NG 本文に追加する")
+        add_name_action = menu.addAction("NG 名前を追加する")  # 新規追加
+        open_settings_action = menu.addAction("NG設定")
+        
+        add_id_action.triggered.connect(lambda: self.add_ng_id(ng_id))
+        add_comment_action.triggered.connect(lambda: self.add_ng_comment(ng_text))
+        add_name_action.triggered.connect(lambda: self.add_ng_name(ng_name))
+        open_settings_action.triggered.connect(self.open_ng_settings)
+        
+        menu.exec_(self.detail_table.mapToGlobal(pos))
+
+    def add_ng_id(self, ng_id):
+        if ng_id and ng_id not in self.settings["ng_ids"]:
+            self.settings["ng_ids"].append(ng_id)
+            self.save_settings()
+            if self.overlay_window:
+                self.overlay_window.update_settings(self.settings)
+            logger.info(f"NG IDに追加: {ng_id}")
+            self.statusBar().showMessage(f"NG ID '{ng_id}' を追加しました")
     
+    def add_ng_comment(self, initial_text):
+        dialog = NGTextDialog(initial_text, "NG 本文の追加", self)
+        if dialog.exec_():
+            text = dialog.get_text()
+            if text and text not in self.settings["ng_texts"]:
+                self.settings["ng_texts"].append(text)
+                self.save_settings()
+                if self.overlay_window:
+                    self.overlay_window.update_settings(self.settings)
+                logger.info(f"NG 本文に追加: {text}")
+                self.statusBar().showMessage(f"NG 本文 '{text}' を追加しました")
+    
+    def add_ng_name(self, initial_text):
+        dialog = NGTextDialog(initial_text, "NG 名前の追加", self)
+        if dialog.exec_():
+            text = dialog.get_text()
+            if text and text not in self.settings["ng_names"]:
+                self.settings["ng_names"].append(text)
+                self.save_settings()
+                if self.overlay_window:
+                    self.overlay_window.update_settings(self.settings)
+                logger.info(f"NG 名前を追加: {text}")
+                self.statusBar().showMessage(f"NG 名前 '{text}' を追加しました")
+    
+    def open_ng_settings(self):
+        dialog = SettingsDialog(self)
+        dialog.tab_widget.setCurrentIndex(2)
+        if dialog.exec_():
+            self.settings = dialog.get_settings()
+            if self.overlay_window:
+                self.overlay_window.update_settings(self.settings)
+            logger.info("設定を更新しました")
+            print("現在の self.settings:", self.settings)
+    
+    def save_settings(self):
+        try:
+            settings_dir = os.path.expanduser("~/.edge_live_viewer")
+            os.makedirs(settings_dir, exist_ok=True)
+            settings_file = os.path.join(settings_dir, "settings.json")
+            with open(settings_file, "w", encoding="utf-8") as f:
+                json.dump(self.settings, f, indent=4)
+        except Exception as e:
+            logger.error(f"設定の保存に失敗しました: {str(e)}")
+            self.show_error(f"設定の保存に失敗しました: {str(e)}")
     def start_thread_fetcher_initial(self):
         if self.thread_fetcher is not None:
             self.thread_fetcher.stop()
@@ -349,7 +454,8 @@ class MainWindow(QMainWindow):
         else:
             logger.info("次スレの自動検索が無効化されています")
             self.statusBar().showMessage(f"スレッド {thread_id} が埋まりました。次スレ検索は無効です")
-            self.overlay_window.add_system_message("次スレ検索は設定で無効化されています", message_type="auto_next_disabled")
+            if self.overlay_window:
+                self.overlay_window.add_system_message("次スレ検索は設定で無効化されています", message_type="auto_next_disabled")
     
     def on_next_thread_found(self, next_thread):
         next_thread_id = next_thread["id"]
@@ -412,7 +518,10 @@ class MainWindow(QMainWindow):
             "overlay_height": 800,
             "hide_anchor_comments": False,
             "hide_url_comments": False,
-            "spacing": 10
+            "spacing": 10,
+            "ng_ids": [],  # NGリスト追加
+            "ng_names": [],
+            "ng_texts": []
         }
         
         try:

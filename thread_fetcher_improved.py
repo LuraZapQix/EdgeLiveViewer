@@ -244,7 +244,7 @@ class CommentFetcher(QThread):
                                     continue
                                 time_diff = (comment['timestamp'] - prev_time).total_seconds()
                                 if time_diff > 0:
-                                    self.safe_sleep(time_diff)  # 再生速度を反映
+                                    self.safe_sleep(time_diff)
                                 if self.running:
                                     self.comments_fetched.emit([comment])
                                     logger.info(f"過去ログコメント送信: レス番号 {comment['number']}, 時間差 {time_diff}秒, 調整後 {time_diff / self.playback_speed}秒, 投稿時間 {comment['date']}")
@@ -259,7 +259,7 @@ class CommentFetcher(QThread):
                 
                 if len(lines) >= 1000 and not self.is_past_thread:
                     logger.info(f"スレッド {self.thread_id} が1000レスに到達しました。次スレを探します。")
-                    self.thread_fetched.emit(self.thread_id, self.thread_title)
+                    self.thread_filled.emit(self.thread_id, self.thread_title)  # thread_fetched → thread_filled に修正
                     self.thread_over_1000.emit(f"スレッド： {self.thread_title} が1000レスに到達しました。")
                     break
                 

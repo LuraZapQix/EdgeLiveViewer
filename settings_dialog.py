@@ -6,7 +6,8 @@ import json
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                            QSlider, QComboBox, QPushButton, QColorDialog,
                            QGroupBox, QFormLayout, QSpinBox, QCheckBox,
-                           QTabWidget, QWidget, QFileDialog, QMessageBox)
+                           QTabWidget, QWidget, QFileDialog, QMessageBox,
+                           QListWidget, QLineEdit)  # 追加
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QColor, QFont, QFontDatabase
 
@@ -34,7 +35,10 @@ class SettingsDialog(QDialog):
             "next_thread_search_duration": 180,
             "hide_anchor_comments": False,
             "hide_url_comments": False,
-            "spacing": 10
+            "spacing": 10,
+            "ng_ids": [],  # NGリスト追加
+            "ng_names": [],
+            "ng_texts": []
         }
         
         self.load_settings()
@@ -44,7 +48,7 @@ class SettingsDialog(QDialog):
         print("現在の self.settings:", self.settings)
 
         layout = QVBoxLayout()
-        tab_widget = QTabWidget()
+        self.tab_widget = QTabWidget()  # self を付けてインスタンス変数に
         
         # 表示設定タブ
         display_tab = QWidget()
@@ -186,7 +190,7 @@ class SettingsDialog(QDialog):
         display_layout.addWidget(display_group)
         
         display_tab.setLayout(display_layout)
-        tab_widget.addTab(display_tab, "表示設定")
+        self.tab_widget.addTab(display_tab, "表示設定")
         
         # 通信設定タブ
         network_tab = QWidget()
@@ -240,10 +244,83 @@ class SettingsDialog(QDialog):
         network_layout.addWidget(playback_group)
         
         network_tab.setLayout(network_layout)
-        tab_widget.addTab(network_tab, "通信・再生設定")
+        self.tab_widget.addTab(network_tab, "通信・再生設定")
+
+
+
+# NG設定タブ（新規）
+        ng_tab = QWidget()
+        ng_layout = QVBoxLayout()
         
-        layout.addWidget(tab_widget)
+        # NG ID
+        ng_id_group = QGroupBox("NG ID")
+        ng_id_layout = QVBoxLayout()
+        self.ng_id_list = QListWidget()
+        for ng_id in self.settings["ng_ids"]:
+            self.ng_id_list.addItem(ng_id)
+        ng_id_layout.addWidget(self.ng_id_list)
+        ng_id_input_layout = QHBoxLayout()
+        self.ng_id_input = QLineEdit()
+        self.ng_id_input.setPlaceholderText("NGにしたいIDを入力")
+        ng_id_add_button = QPushButton("追加")
+        ng_id_add_button.clicked.connect(self.add_ng_id)
+        ng_id_remove_button = QPushButton("削除")
+        ng_id_remove_button.clicked.connect(self.remove_ng_id)
+        ng_id_input_layout.addWidget(self.ng_id_input)
+        ng_id_input_layout.addWidget(ng_id_add_button)
+        ng_id_input_layout.addWidget(ng_id_remove_button)
+        ng_id_layout.addLayout(ng_id_input_layout)
+        ng_id_group.setLayout(ng_id_layout)
+        ng_layout.addWidget(ng_id_group)
         
+        # NG 名前
+        ng_name_group = QGroupBox("NG 名前")
+        ng_name_layout = QVBoxLayout()
+        self.ng_name_list = QListWidget()
+        for ng_name in self.settings["ng_names"]:
+            self.ng_name_list.addItem(ng_name)
+        ng_name_layout.addWidget(self.ng_name_list)
+        ng_name_input_layout = QHBoxLayout()
+        self.ng_name_input = QLineEdit()
+        self.ng_name_input.setPlaceholderText("NGにしたい名前を入力")
+        ng_name_add_button = QPushButton("追加")
+        ng_name_add_button.clicked.connect(self.add_ng_name)
+        ng_name_remove_button = QPushButton("削除")
+        ng_name_remove_button.clicked.connect(self.remove_ng_name)
+        ng_name_input_layout.addWidget(self.ng_name_input)
+        ng_name_input_layout.addWidget(ng_name_add_button)
+        ng_name_input_layout.addWidget(ng_name_remove_button)
+        ng_name_layout.addLayout(ng_name_input_layout)
+        ng_name_group.setLayout(ng_name_layout)
+        ng_layout.addWidget(ng_name_group)
+        
+        # NG 本文文字列
+        ng_text_group = QGroupBox("NG 本文文字列")
+        ng_text_layout = QVBoxLayout()
+        self.ng_text_list = QListWidget()
+        for ng_text in self.settings["ng_texts"]:
+            self.ng_text_list.addItem(ng_text)
+        ng_text_layout.addWidget(self.ng_text_list)
+        ng_text_input_layout = QHBoxLayout()
+        self.ng_text_input = QLineEdit()
+        self.ng_text_input.setPlaceholderText("NGにしたい文字列を入力")
+        ng_text_add_button = QPushButton("追加")
+        ng_text_add_button.clicked.connect(self.add_ng_text)
+        ng_text_remove_button = QPushButton("削除")
+        ng_text_remove_button.clicked.connect(self.remove_ng_text)
+        ng_text_input_layout.addWidget(self.ng_text_input)
+        ng_text_input_layout.addWidget(ng_text_add_button)
+        ng_text_input_layout.addWidget(ng_text_remove_button)
+        ng_text_layout.addLayout(ng_text_input_layout)
+        ng_text_group.setLayout(ng_text_layout)
+        ng_layout.addWidget(ng_text_group)
+        
+        ng_tab.setLayout(ng_layout)
+        self.tab_widget.addTab(ng_tab, "NG設定")
+        
+        layout.addWidget(self.tab_widget)
+        
+        # ボタンレイアウト（既存、変更なし）
         button_layout = QHBoxLayout()
         self.save_button = QPushButton("保存")
         self.save_button.clicked.connect(self.save_settings)
@@ -259,7 +336,51 @@ class SettingsDialog(QDialog):
         
         layout.addLayout(button_layout)
         self.setLayout(layout)
+
+    # NG追加メソッド
+    def add_ng_id(self):
+        text = self.ng_id_input.text().strip()
+        if text and text not in self.settings["ng_ids"]:
+            self.settings["ng_ids"].append(text)
+            self.ng_id_list.addItem(text)
+            self.ng_id_input.clear()
     
+    def add_ng_name(self):
+        text = self.ng_name_input.text().strip()
+        if text and text not in self.settings["ng_names"]:
+            self.settings["ng_names"].append(text)
+            self.ng_name_list.addItem(text)
+            self.ng_name_input.clear()
+    
+    def add_ng_text(self):
+        text = self.ng_text_input.text().strip()
+        if text and text not in self.settings["ng_texts"]:
+            self.settings["ng_texts"].append(text)
+            self.ng_text_list.addItem(text)
+            self.ng_text_input.clear()
+    
+    # NG削除メソッド
+    def remove_ng_id(self):
+        selected = self.ng_id_list.currentItem()
+        if selected:
+            text = selected.text()
+            self.settings["ng_ids"].remove(text)
+            self.ng_id_list.takeItem(self.ng_id_list.row(selected))
+    
+    def remove_ng_name(self):
+        selected = self.ng_name_list.currentItem()
+        if selected:
+            text = selected.text()
+            self.settings["ng_names"].remove(text)
+            self.ng_name_list.takeItem(self.ng_name_list.row(selected))
+    
+    def remove_ng_text(self):
+        selected = self.ng_text_list.currentItem()
+        if selected:
+            text = selected.text()
+            self.settings["ng_texts"].remove(text)
+            self.ng_text_list.takeItem(self.ng_text_list.row(selected))
+
     def update_font_size_label(self, value):
         self.font_size_label.setText(f"{value}pt")
     
@@ -303,9 +424,10 @@ class SettingsDialog(QDialog):
     def get_settings(self):
         return self.settings
     
+    # 保存メソッドの修正
     def save_settings(self):
         self.settings["font_size"] = self.font_size_slider.value()
-        self.settings["font_weight"] = self.font_weight_slider.value()  # 修正: スライダーから取得
+        self.settings["font_weight"] = self.font_weight_slider.value()
         self.settings["font_shadow"] = self.font_shadow_slider.value()
         self.settings["font_color"] = self.font_color_button.text()
         self.settings["font_family"] = self.font_family_combo.currentData()
@@ -322,6 +444,7 @@ class SettingsDialog(QDialog):
         self.settings["hide_anchor_comments"] = self.hide_anchor_checkbox.isChecked()
         self.settings["hide_url_comments"] = self.hide_url_checkbox.isChecked()
         self.settings["spacing"] = self.spacing_spin.value()
+        # NGリストは既に self.settings に反映済み
         
         try:
             settings_dir = os.path.expanduser("~/.edge_live_viewer")
@@ -365,7 +488,10 @@ class SettingsDialog(QDialog):
                 "next_thread_search_duration": 180,
                 "hide_anchor_comments": False,
                 "hide_url_comments": False,
-                "spacing": 10
+                "spacing": 10,
+                "ng_ids": [],
+                "ng_names": [],
+                "ng_texts": []
             }
             self.font_size_slider.setValue(self.settings["font_size"])
             self.font_weight_slider.setValue(self.settings["font_weight"])  # 修正: スライダーにリセット
@@ -392,6 +518,9 @@ class SettingsDialog(QDialog):
             self.hide_anchor_checkbox.setChecked(self.settings["hide_anchor_comments"])
             self.hide_url_checkbox.setChecked(self.settings["hide_url_comments"])
             self.spacing_spin.setValue(self.settings["spacing"])
+            self.ng_id_list.clear()
+            self.ng_name_list.clear()
+            self.ng_text_list.clear()
 
 if __name__ == "__main__":
     import sys
