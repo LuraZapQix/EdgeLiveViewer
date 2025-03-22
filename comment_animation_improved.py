@@ -27,6 +27,7 @@ class CommentOverlayWindow(QWidget):
         self.font_color = QColor("#FFFFFF")
         self.font_family = "MSP Gothic"
         self.font_shadow_direction = "bottom-right"
+        self.font_shadow_directions = ["bottom-right"]  # デフォルトをリストに変更
         self.font_shadow_color = QColor("#000000")
         self.comment_speed = 6.0  # デフォルトを6.0秒（浮動小数点数）に変更
         self.display_position = "center"
@@ -465,14 +466,16 @@ class CommentOverlayWindow(QWidget):
             if self.font_shadow > 0:
                 painter.setPen(self.font_shadow_color)
                 offset = self.font_shadow
-                if self.font_shadow_direction == "bottom-right":
-                    painter.drawText(int(comment['x']) + offset, int(comment['y']) + offset, comment['text'])
-                elif self.font_shadow_direction == "top-right":
-                    painter.drawText(int(comment['x']) + offset, int(comment['y']) - offset, comment['text'])
-                elif self.font_shadow_direction == "bottom-left":
-                    painter.drawText(int(comment['x']) - offset, int(comment['y']) + offset, comment['text'])
-                elif self.font_shadow_direction == "top-left":
-                    painter.drawText(int(comment['x']) - offset, int(comment['y']) - offset, comment['text'])
+                # 複数の方向に対応
+                for direction in self.font_shadow_directions:
+                    if direction == "bottom-right":
+                        painter.drawText(int(comment['x']) + offset, int(comment['y']) + offset, comment['text'])
+                    elif direction == "top-right":
+                        painter.drawText(int(comment['x']) + offset, int(comment['y']) - offset, comment['text'])
+                    elif direction == "bottom-left":
+                        painter.drawText(int(comment['x']) - offset, int(comment['y']) + offset, comment['text'])
+                    elif direction == "top-left":
+                        painter.drawText(int(comment['x']) - offset, int(comment['y']) - offset, comment['text'])
 
             painter.setPen(self.font_color)
             painter.drawText(int(comment['x']), int(comment['y']), comment['text'])
@@ -484,6 +487,7 @@ class CommentOverlayWindow(QWidget):
         self.font_color = QColor(settings.get("font_color", self.font_color.name()))
         self.font_family = settings.get("font_family", self.font_family)
         self.font_shadow_direction = settings.get("font_shadow_direction", self.font_shadow_direction)
+        self.font_shadow_directions = settings.get("font_shadow_directions", ["bottom-right"])
         self.font_shadow_color = QColor(settings.get("font_shadow_color", self.font_shadow_color.name()))
         self.comment_speed = settings.get("comment_speed", self.comment_speed)
         self.display_position = settings.get("display_position", self.display_position)

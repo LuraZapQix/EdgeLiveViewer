@@ -104,19 +104,30 @@ class SettingsDialog(QDialog):
         font_layout.addRow("フォントの影:", self.font_shadow_slider)
         font_layout.addRow("", self.font_shadow_label)
         
-        self.font_shadow_direction_combo = QComboBox()
-        self.font_shadow_direction_combo.addItem("右下", "bottom-right")
-        self.font_shadow_direction_combo.addItem("右上", "top-right")
-        self.font_shadow_direction_combo.addItem("左下", "bottom-left")
-        self.font_shadow_direction_combo.addItem("左上", "top-left")
-        shadow_direction = self.settings.get("font_shadow_direction", "bottom-right")
-        index = self.font_shadow_direction_combo.findData(shadow_direction)
-        if index >= 0:
-            self.font_shadow_direction_combo.setCurrentIndex(index)
-        else:
-            print(f"影の方向: {shadow_direction} が見つかりませんでした。デフォルト 'bottom-right' を使用")
-            self.font_shadow_direction_combo.setCurrentIndex(0)
-        font_layout.addRow("影の方向:", self.font_shadow_direction_combo)
+        # 影の方向グループを追加
+        shadow_direction_group = QGroupBox("影の方向")
+        shadow_direction_layout = QHBoxLayout()  # QVBoxLayout を QHBoxLayout に変更
+
+        # チェックボックスの定義
+        self.shadow_top_left = QCheckBox("左上")
+        self.shadow_bottom_left = QCheckBox("左下")
+        self.shadow_top_right = QCheckBox("右上")
+        self.shadow_bottom_right = QCheckBox("右下")
+
+        # 初期状態を設定（リスト形式で管理）
+        shadow_directions = self.settings.get("font_shadow_directions", ["bottom-right"])
+        self.shadow_top_left.setChecked("top-left" in shadow_directions)
+        self.shadow_bottom_left.setChecked("bottom-left" in shadow_directions)
+        self.shadow_top_right.setChecked("top-right" in shadow_directions)
+        self.shadow_bottom_right.setChecked("bottom-right" in shadow_directions)
+
+        # レイアウトに追加（左上→左下→右上→右下の順）
+        shadow_direction_layout.addWidget(self.shadow_top_left)
+        shadow_direction_layout.addWidget(self.shadow_bottom_left)
+        shadow_direction_layout.addWidget(self.shadow_top_right)
+        shadow_direction_layout.addWidget(self.shadow_bottom_right)
+        shadow_direction_group.setLayout(shadow_direction_layout)
+        font_layout.addRow("影の方向:", shadow_direction_group)
         
         self.font_shadow_color_button = QPushButton()
         self.font_shadow_color_button.setAutoFillBackground(True)
@@ -439,13 +450,23 @@ class SettingsDialog(QDialog):
         self.settings["playback_speed"] = self.playback_speed_combo.currentData()
         self.settings["auto_next_thread"] = self.auto_next_thread_check.isChecked()
         self.settings["next_thread_search_duration"] = self.next_thread_search_duration_spin.value()
-        self.settings["font_shadow_direction"] = self.font_shadow_direction_combo.currentData()
         self.settings["font_shadow_color"] = self.font_shadow_color_button.text()
         self.settings["hide_anchor_comments"] = self.hide_anchor_checkbox.isChecked()
         self.settings["hide_url_comments"] = self.hide_url_checkbox.isChecked()
         self.settings["spacing"] = self.spacing_spin.value()
-        # NGリストは既に self.settings に反映済み
-        
+
+        # 影の方向をリストとして保存
+        shadow_directions = []
+        if self.shadow_bottom_right.isChecked():
+            shadow_directions.append("bottom-right")
+        if self.shadow_top_right.isChecked():
+            shadow_directions.append("top-right")
+        if self.shadow_bottom_left.isChecked():
+            shadow_directions.append("bottom-left")
+        if self.shadow_top_left.isChecked():
+            shadow_directions.append("top-left")
+        self.settings["font_shadow_directions"] = shadow_directions
+
         try:
             settings_dir = os.path.expanduser("~/.edge_live_viewer")
             os.makedirs(settings_dir, exist_ok=True)
@@ -477,6 +498,7 @@ class SettingsDialog(QDialog):
                 "font_color": "#FFFFFF",
                 "font_family": "MSP Gothic",
                 "font_shadow_direction": "bottom-right",
+                "font_shadow_directions": ["bottom-right"],  # リスト形式でデフォルトは "bottom-right" のみ
                 "font_shadow_color": "#000000",
                 "comment_speed": 6,
                 "display_position": "center",
@@ -496,6 +518,10 @@ class SettingsDialog(QDialog):
             self.font_size_slider.setValue(self.settings["font_size"])
             self.font_weight_slider.setValue(self.settings["font_weight"])  # 修正: スライダーにリセット
             self.font_shadow_slider.setValue(self.settings["font_shadow"])
+            self.shadow_bottom_right.setChecked(True)
+            self.shadow_top_right.setChecked(False)
+            self.shadow_bottom_left.setChecked(False)
+            self.shadow_top_left.setChecked(False)
             self.update_color_button(self.settings["font_color"])
             self.comment_speed_slider.setValue(self.settings["comment_speed"])
             index = self.display_position_combo.findData(self.settings["display_position"])
@@ -521,6 +547,7 @@ class SettingsDialog(QDialog):
             self.ng_id_list.clear()
             self.ng_name_list.clear()
             self.ng_text_list.clear()
+            
 
 if __name__ == "__main__":
     import sys

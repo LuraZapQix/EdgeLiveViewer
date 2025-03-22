@@ -241,6 +241,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"設定の保存に失敗しました: {str(e)}")
             self.show_error(f"設定の保存に失敗しました: {str(e)}")
+
     def start_thread_fetcher_initial(self):
         if self.thread_fetcher is not None:
             self.thread_fetcher.stop()
@@ -514,6 +515,7 @@ class MainWindow(QMainWindow):
             "font_color": "#FFFFFF",
             "font_family": "MSP Gothic",
             "font_shadow_direction": "bottom-right",
+            "font_shadow_directions": ["bottom-right"],  # 単一文字列からリストに変更
             "font_shadow_color": "#000000",
             "comment_speed": 6.0,
             "display_position": "center",
