@@ -16,7 +16,7 @@
 - **Windows**: Windows 10/11（推奨）
 
 ## インストール
-1. [Releasesページ](https://github.com/LuraZapQix/EdgeLiveViewer/releases)から最新版をダウンロード。
+1. [Releasesページ](https://github.com/LuraZapQix/EdgeLiveViewer-Download/releases)から最新版をダウンロード。
    - Windows: `EdgeLiveViewer.exe`
    
 2. ファイルを任意の場所に保存。
@@ -44,4 +44,4 @@
 - **動作が重い**: 設定で最大コメント数を減らすか、影をオフにするか、更新間隔を長くするなど。
 
 ## 貢献
-バグ報告や機能提案は[Issues](https://github.com/LuraZapQix/EdgeLiveViewer/issues)へ。
+バグ報告や機能提案は[Issues](https://github.com/LuraZapQix/EdgeLiveViewer-Download/issues)へ。
