@@ -518,7 +518,7 @@ class MainWindow(QMainWindow):
             "font_shadow_directions": ["bottom-right"],  # 単一文字列からリストに変更
             "font_shadow_color": "#000000",
             "comment_speed": 6.0,
-            "display_position": "center",
+            "display_position": "top",  # "center" から "top" に変更
             "max_comments": 40,
             "window_opacity": 0.8,
             "update_interval": 5,

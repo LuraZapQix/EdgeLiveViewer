@@ -30,7 +30,7 @@ class CommentOverlayWindow(QWidget):
         self.font_shadow_directions = ["bottom-right"]  # デフォルトをリストに変更
         self.font_shadow_color = QColor("#000000")
         self.comment_speed = 6.0  # デフォルトを6.0秒（浮動小数点数）に変更
-        self.display_position = "center"
+        self.display_position = "top"  # デフォルトを "top" に変更
         self.hide_anchor_comments = False  # 新規追加
         self.hide_url_comments = False     # 新規追加
         self.spacing = 20  # 修正: デフォルト値として追加
@@ -311,7 +311,7 @@ class CommentOverlayWindow(QWidget):
         name = comment['name']
         user_id = comment['id']
         
-        # NGフィルタリング
+        # NGフィルタリング（変更なし）
         if user_id in self.ng_ids:
             logger.debug(f"NG IDでスキップ: {user_id}, コメント: {text}")
             return
@@ -322,7 +322,7 @@ class CommentOverlayWindow(QWidget):
             logger.debug(f"NG 本文でスキップ: {text}")
             return
         
-        # フィルタリング条件
+        # フィルタリング条件（変更なし）
         if self.hide_anchor_comments and ">>" in text:
             logger.debug(f"アンカーコメントをスキップ: {text}")
             return
@@ -343,20 +343,18 @@ class CommentOverlayWindow(QWidget):
         
         line_height = font_metrics.height()
         if self.display_position == "top":
+            # 上部優先: 上から順に埋まる（変更なし）
             y_position = self.move_area_height + row * self.row_height + line_height
         elif self.display_position == "bottom":
-            y_position = self.height() - (self.max_rows - row) * self.row_height
-        else:  # center
-            total_height = self.max_rows * self.row_height
-            start_y = max(self.move_area_height, (self.height() - total_height) // 2) + line_height
-            y_position = start_y + row * self.row_height
+            # 下部優先: 下から順に上に埋まる
+            y_position = self.height() - row * self.row_height - line_height
         
         y_position = max(line_height + self.move_area_height, min(y_position, self.height() - line_height))
         
         self.comment_id_counter += 1
         comment_id = f"comment_{int(time.time()*1000)}_{self.comment_id_counter}"
         total_distance = self.width() + text_width
-        speed = total_distance / self.comment_speed  # self.comment_speed は float
+        speed = total_distance / self.comment_speed
         comment_obj = {
             'id': comment_id,
             'text': text,
@@ -490,7 +488,7 @@ class CommentOverlayWindow(QWidget):
         self.font_shadow_directions = settings.get("font_shadow_directions", ["bottom-right"])
         self.font_shadow_color = QColor(settings.get("font_shadow_color", self.font_shadow_color.name()))
         self.comment_speed = settings.get("comment_speed", self.comment_speed)
-        self.display_position = settings.get("display_position", self.display_position)
+        self.display_position = settings.get("display_position", "top")
         self.max_comments = settings.get("max_comments", self.max_comments)
         self.hide_anchor_comments = settings.get("hide_anchor_comments", self.hide_anchor_comments)
         self.hide_url_comments = settings.get("hide_url_comments", self.hide_url_comments)

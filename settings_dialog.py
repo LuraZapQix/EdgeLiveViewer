@@ -164,11 +164,12 @@ class SettingsDialog(QDialog):
         
         self.display_position_combo = QComboBox()
         self.display_position_combo.addItem("上部", "top")
-        self.display_position_combo.addItem("中央", "center")
         self.display_position_combo.addItem("下部", "bottom")
         index = self.display_position_combo.findData(self.settings["display_position"])
         if index >= 0:
             self.display_position_combo.setCurrentIndex(index)
+        else:
+            self.display_position_combo.setCurrentIndex(0)  # デフォルトは「上部」
         display_form.addRow("表示位置:", self.display_position_combo)
         
         self.max_comments_spin = QSpinBox()
