@@ -167,13 +167,14 @@ class MainWindow(QMainWindow):
         if self.comment_fetcher and self.comment_fetcher.isRunning():
             self.comment_fetcher.stop()
         
-        self.comment_fetcher = CommentFetcher(thread_id, thread_title, self.settings["update_interval"], is_past_thread=is_past_thread)
+        playback_speed = self.settings.get("playback_speed", 1.0)  # デフォルト1.0倍速
+        self.comment_fetcher = CommentFetcher(thread_id, thread_title, self.settings["update_interval"], is_past_thread, playback_speed)
         self.comment_fetcher.comments_fetched.connect(self.display_comments)
         self.comment_fetcher.thread_filled.connect(self.handle_thread_filled)
         self.comment_fetcher.error_occurred.connect(self.show_error)
         self.comment_fetcher.thread_over_1000.connect(self.on_thread_over_1000)
         self.comment_fetcher.start()
-        logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title}, 過去ログ: {is_past_thread})")
+        logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title}, 過去ログ: {is_past_thread}, 再生速度: {playback_speed}x)")
     
     def update_thread_list(self, threads):
         self.thread_table.setRowCount(0)
