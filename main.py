@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-エッジ実況ビュアー
+エッヂ実況ビュアー
 エッヂ掲示板のコメントをニコニコ動画風に表示するアプリケーション
 """
 
@@ -60,7 +60,7 @@ class NGTextDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("エッジ実況ビュアー")
+        self.setWindowTitle("エッヂ実況ビュアー")
         self.setMinimumSize(800, 600)
         
         # 設定の読み込み
@@ -566,8 +566,8 @@ class MainWindow(QMainWindow):
 
     def show_tutorial_if_first_launch(self):
         if self.settings.get("first_launch", True):
-            QMessageBox.information(self, "エッジ実況ビュアーへようこそ",
-                                  "エッジ実況ビュアーへようこそ！\n\n"
+            QMessageBox.information(self, "エッヂ実況ビュアーへようこそ",
+                                  "エッヂ実況ビュアーへようこそ！\n\n"
                                   "このアプリケーションは、エッヂ掲示板のコメントをニコニコ動画風に表示します。\n\n"
                                   "使い方：\n"
                                   "1. スレッド一覧からスレッドを選択するか、スレッドURLまたはIDを入力して接続します。\n"
