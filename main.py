@@ -269,20 +269,28 @@ class MainWindow(QMainWindow):
             self.comment_fetcher.stop()
         
         playback_speed = self.settings.get("playback_speed", 1.0)
-        self.comment_fetcher = CommentFetcher(thread_id, thread_title, self.settings["update_interval"], is_past_thread, playback_speed)
+        comment_delay = self.settings.get("comment_delay", 0) if not is_past_thread else 0  # リアルタイム時のみ適用
+        self.comment_fetcher = CommentFetcher(
+            thread_id=thread_id,
+            thread_title=thread_title,
+            update_interval=self.settings["update_interval"],
+            is_past_thread=is_past_thread,
+            playback_speed=playback_speed,
+            comment_delay=comment_delay,
+            parent=self  # 親として MainWindow を明示的に指定
+        )
         self.comment_fetcher.comments_fetched.connect(self.display_comments)
         self.comment_fetcher.thread_filled.connect(self.handle_thread_filled)
         self.comment_fetcher.error_occurred.connect(self.show_error)
         self.comment_fetcher.thread_over_1000.connect(self.on_thread_over_1000)
         self.comment_fetcher.start()
         
-        # スレッド詳細タブを更新
         self.current_thread_id = thread_id
         self.current_thread_title = thread_title
         self.thread_title_label.setText(f"接続中のスレッド: {thread_title}")
-        self.detail_table.setRowCount(0)  # 接続時にテーブルをクリア
-        logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title}, 過去ログ: {is_past_thread}, 再生速度: {playback_speed}x)")
-    
+        self.detail_table.setRowCount(0)
+        logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title}, 過去ログ: {is_past_thread}, 再生速度: {playback_speed}x, 遅延: {comment_delay}秒)")
+
     def update_thread_list(self, threads):
         self.thread_table.setRowCount(0)
         
@@ -516,6 +524,7 @@ class MainWindow(QMainWindow):
             "font_shadow_directions": ["bottom-right"],  # 単一文字列からリストに変更
             "font_shadow_color": "#000000",
             "comment_speed": 6.0,
+            "comment_delay": 0,  # 新規追加
             "display_position": "top",  # "center" から "top" に変更
             "max_comments": 40,
             "window_opacity": 0.8,

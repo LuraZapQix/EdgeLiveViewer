@@ -233,6 +233,13 @@ class SettingsDialog(QDialog):
         self.next_thread_search_duration_spin.setValue(self.settings["next_thread_search_duration"])
         self.next_thread_search_duration_spin.setSuffix("秒")
         network_form.addRow("次スレ検索時間:", self.next_thread_search_duration_spin)
+
+        # 通信設定タブ内の network_form に追加
+        self.comment_delay_spin = QSpinBox()
+        self.comment_delay_spin.setRange(0, 300)  # 0～300秒
+        self.comment_delay_spin.setValue(self.settings.get("comment_delay", 0))  # デフォルト0秒
+        self.comment_delay_spin.setSuffix("秒")
+        network_form.addRow("コメントを遅延秒数:", self.comment_delay_spin)
         
         network_group.setLayout(network_form)
         network_layout.addWidget(network_group)
@@ -449,6 +456,7 @@ class SettingsDialog(QDialog):
         self.settings["comment_speed"] = self.comment_speed_slider.value() / 10.0
         self.settings["display_position"] = self.display_position_combo.currentData()
         self.settings["max_comments"] = self.max_comments_spin.value()
+        self.settings["comment_delay"] = self.comment_delay_spin.value()
         self.settings["window_opacity"] = self.window_opacity_slider.value() / 100.0
         self.settings["update_interval"] = self.update_interval_slider.value()
         self.settings["playback_speed"] = self.playback_speed_combo.currentData()
@@ -505,6 +513,7 @@ class SettingsDialog(QDialog):
                 "font_shadow_directions": ["bottom-right"],  # リスト形式でデフォルトは "bottom-right" のみ
                 "font_shadow_color": "#000000",
                 "comment_speed": 6,
+                "comment_delay": 0,
                 "display_position": "center",
                 "max_comments": 40,
                 "window_opacity": 0.8,
@@ -528,6 +537,7 @@ class SettingsDialog(QDialog):
             self.shadow_top_left.setChecked(False)
             self.update_color_button(self.settings["font_color"])
             self.comment_speed_slider.setValue(self.settings["comment_speed"])
+            self.comment_delay_spin.setValue(0)
             index = self.display_position_combo.findData(self.settings["display_position"])
             if index >= 0:
                 self.display_position_combo.setCurrentIndex(index)

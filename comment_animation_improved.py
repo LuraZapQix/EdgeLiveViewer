@@ -546,6 +546,7 @@ class CommentOverlayWindow(QWidget):
         self.font_shadow_directions = settings.get("font_shadow_directions", ["bottom-right"])
         self.font_shadow_color = QColor(settings.get("font_shadow_color", self.font_shadow_color.name()))
         self.comment_speed = settings.get("comment_speed", self.comment_speed)
+        self.comment_delay = settings.get("comment_delay", 0)  
         self.display_position = settings.get("display_position", "top")
         self.max_comments = settings.get("max_comments", self.max_comments)
         self.hide_anchor_comments = settings.get("hide_anchor_comments", self.hide_anchor_comments)
