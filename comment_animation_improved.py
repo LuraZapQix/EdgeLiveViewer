@@ -26,20 +26,21 @@ class CommentOverlayWindow(QWidget):
         self.font_shadow = 2
         self.font_color = QColor("#FFFFFF")
         self.font_family = "MSP Gothic"
-        self.font_shadow_direction = "bottom-right"
-        self.font_shadow_directions = ["bottom-right"]  # デフォルトをリストに変更
+        self.font_shadow_directions = ["bottom-right"]
         self.font_shadow_color = QColor("#000000")
-        self.comment_speed = 6.0  # デフォルトを6.0秒（浮動小数点数）に変更
-        self.display_position = "top"  # デフォルトを "top" に変更
-        self.hide_anchor_comments = False  # 新規追加
-        self.hide_url_comments = False     # 新規追加
-        self.spacing = 20  # 修正: デフォルト値として追加
+        self.comment_speed = 6.0
+        self.display_position = "top"
+        self.hide_anchor_comments = False
+        self.hide_url_comments = False
+        self.spacing = 20
 
-        # ここで comment_queue を初期化（追加）
         self.comment_queue = []
-        self.flow_timer = QTimer(self)
+        self.flow_timer = QTimer(self)  # 初期化用に残すが、後で停止
         self.flow_timer.timeout.connect(self.flow_comment)
-        self.flow_timer.start(200)  # 200ms間隔で流す
+        self.flow_timer.start(200)
+
+        self.current_batch_size = 0
+        self.current_update_interval = 1.0
 
         self.move_area_height = 25
         self.close_button_size = 22
@@ -64,27 +65,88 @@ class CommentOverlayWindow(QWidget):
         self.timer.start(8)
 
         self.comment_id_counter = 0
-
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
-
         self.main_window = None
-
         self.ng_ids = []
         self.ng_names = []
         self.ng_texts = []
-
-        self.row_usage = {}  # {row: comment_obj} に変更（以前は {row: end_time}）
+        self.row_usage = {}
 
     def add_comment_batch(self, comments):
+        """コメントバッチを追加し、流れを開始"""
+        batch_size = len(comments)
+        self.current_batch_size = batch_size
+        app = QApplication.instance()
+        main_window = app.property("main_window")
+        if main_window:
+            self.current_update_interval = main_window.settings.get("update_interval", 1.0)
+        else:
+            self.current_update_interval = 1.0
+
         self.comment_queue.extend(comments)
-        logger.debug(f"コメントをキューに追加: 数={len(comments)}, キュー長={len(self.comment_queue)}")
+        logger.debug(f"コメントをキューに追加: 数={batch_size}, キュー長={len(self.comment_queue)}")
+
+        # flow_timerを停止し、スケジュール開始
+        if self.flow_timer.isActive():
+            self.flow_timer.stop()
+        self.schedule_next_comment()
+
+    def schedule_next_comment(self):
+        """次のコメントをスケジュール"""
+        if self.comment_queue:
+            # 間隔を計算
+            interval = self.calculate_flow_interval()
+            QTimer.singleShot(interval, self.flow_comment)
+            logger.debug(f"次のコメントを {interval}ms 後にスケジュール")
+
+    def calculate_flow_interval(self):
+        """コメント間の間隔を計算"""
+        if self.current_batch_size == 0 or self.current_update_interval <= 0:
+            return 200  # デフォルト
+
+        comments_per_sec = self.current_batch_size / self.current_update_interval
+        base_interval = int((self.current_update_interval * 1000) / self.current_batch_size)
+
+        if comments_per_sec <= 2.0:
+            # コメントが少ない場合、300～500msでランダム
+            return random.randint(300, 500)
+        else:
+            # コメントが多い場合、ベース間隔に±20%の揺らぎ
+            variance = int(base_interval * 0.2)
+            return random.randint(max(50, base_interval - variance), min(500, base_interval + variance))
+
+    def adjust_flow_timer(self):
+        """更新間隔とコメント数に基づいてflow_timer間隔を動的に調整"""
+        if self.current_batch_size == 0 or self.current_update_interval <= 0:
+            self.flow_timer.setInterval(200)  # デフォルト
+            return
+
+        # 1秒あたりのコメント数
+        comments_per_sec = self.current_batch_size / self.current_update_interval
+
+        # 基本間隔: 更新間隔内でバッチを消化
+        interval = int((self.current_update_interval * 1000) / self.current_batch_size)
+
+        # コメント数が少ない場合（1秒あたり2件以下）にランダム性を持たせる
+        if comments_per_sec <= 2.0:
+            interval = random.randint(300, 500)
+        else:
+            # 50ms～500msに制限
+            interval = max(50, min(500, interval))
+
+        self.flow_timer.setInterval(interval)
+        logger.info(f"flow_timer間隔を調整: {interval}ms (update_interval={self.current_update_interval}s, batch_size={self.current_batch_size})")
 
     def flow_comment(self):
         if self.comment_queue:
             comment = self.comment_queue.pop(0)
             self.add_comment(comment)
             logger.debug(f"コメントを流す: text={comment['text']}, 残りキュー={len(self.comment_queue)}")
+            # 次のコメントをスケジュール
+            self.schedule_next_comment()
+        else:
+            logger.info("キューが空に。次のバッチを待機")
 
     def add_system_message(self, message, message_type="generic"):
         """システムメッセージをコメントとして追加（通常コメントと同じロジックで流す）"""
@@ -542,27 +604,23 @@ class CommentOverlayWindow(QWidget):
         self.font_shadow = settings.get("font_shadow", self.font_shadow)
         self.font_color = QColor(settings.get("font_color", self.font_color.name()))
         self.font_family = settings.get("font_family", self.font_family)
-        self.font_shadow_direction = settings.get("font_shadow_direction", self.font_shadow_direction)
         self.font_shadow_directions = settings.get("font_shadow_directions", ["bottom-right"])
         self.font_shadow_color = QColor(settings.get("font_shadow_color", self.font_shadow_color.name()))
         self.comment_speed = settings.get("comment_speed", self.comment_speed)
-        self.comment_delay = settings.get("comment_delay", 0)  
         self.display_position = settings.get("display_position", "top")
         self.max_comments = settings.get("max_comments", self.max_comments)
         self.hide_anchor_comments = settings.get("hide_anchor_comments", self.hide_anchor_comments)
         self.hide_url_comments = settings.get("hide_url_comments", self.hide_url_comments)
         self.spacing = settings.get("spacing", self.spacing)
-        
         self.ng_ids = settings.get("ng_ids", [])
         self.ng_names = settings.get("ng_names", [])
         self.ng_texts = settings.get("ng_texts", [])
-        logger.info(f"NG設定を更新: IDs={self.ng_ids}, Names={self.ng_names}, Texts={self.ng_texts}")
+        self.current_update_interval = settings.get("update_interval", 1.0)
 
         opacity = settings.get("window_opacity", 0.8)
         self.setWindowOpacity(opacity)
         
         self.calculate_comment_rows()
-        
         for comment in self.comments:
             total_distance = self.width() + comment['width']
             comment['speed'] = total_distance / self.comment_speed
