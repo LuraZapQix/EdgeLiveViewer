@@ -33,9 +33,10 @@ class CommentOverlayWindow(QWidget):
         self.hide_anchor_comments = False
         self.hide_url_comments = False
         self.spacing = 20
-
         self.comment_queue = []
-        self.flow_timer = QTimer(self)  # 初期化用に残すが、後で停止
+        self.comment_queue_max_size = 100  # キューサイズの制限を追加
+
+        self.flow_timer = QTimer(self)
         self.flow_timer.timeout.connect(self.flow_comment)
         self.flow_timer.start(200)
 
@@ -84,10 +85,15 @@ class CommentOverlayWindow(QWidget):
         else:
             self.current_update_interval = 1.0
 
+        # キューサイズを制限
+        if len(self.comment_queue) + batch_size > self.comment_queue_max_size:
+            excess = len(self.comment_queue) + batch_size - self.comment_queue_max_size
+            self.comment_queue = self.comment_queue[excess:]
+            logger.warning(f"コメントキューが上限 {self.comment_queue_max_size} を超えたため、古いコメントを削除しました")
+
         self.comment_queue.extend(comments)
         logger.debug(f"コメントをキューに追加: 数={batch_size}, キュー長={len(self.comment_queue)}")
 
-        # flow_timerを停止し、スケジュール開始
         if self.flow_timer.isActive():
             self.flow_timer.stop()
         self.schedule_next_comment()

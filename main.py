@@ -63,7 +63,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("エッヂ実況ビュアー")
         self.setMinimumSize(800, 600)
         
-        # 設定の読み込み
         self.settings = self.load_settings()
         print("main.py の self.settings:", self.settings)
         
@@ -82,6 +81,11 @@ class MainWindow(QMainWindow):
         
         self.start_thread_fetcher_initial()
         self.show_tutorial_if_first_launch()
+        
+        # ヘルスチェックタイマーを追加
+        self.health_timer = QTimer(self)
+        self.health_timer.timeout.connect(self.check_fetcher_health)
+        self.health_timer.start(30000)  # 30秒ごとにチェック
     
     def init_ui(self):
         central_widget = QWidget()
@@ -164,6 +168,11 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(button_layout)
         
         self.statusBar().showMessage("準備完了")
+
+    def check_fetcher_health(self):
+        if self.comment_fetcher and not self.comment_fetcher.isRunning():
+            logger.warning("CommentFetcher が停止している可能性があります。再起動します")
+            self.start_thread_fetcher(self.current_thread_id, self.current_thread_title)
 
     def show_context_menu(self, pos):
         row = self.detail_table.currentRow()
@@ -356,12 +365,21 @@ class MainWindow(QMainWindow):
             logger.info(f"次スレ検索を停止しました（新しいスレッド接続: {thread_id}）")
             self.next_thread_finder = None
         
+        # 既存のコメントフェッチャーを停止
         if self.comment_fetcher is not None:
             self.comment_fetcher.stop()
+            if not self.comment_fetcher.isFinished():
+                logger.warning(f"既存の CommentFetcher {self.current_thread_id} が終了していない可能性があります")
         
+        # オーバーレイウィンドウのリセット
+        if self.overlay_window:
+            self.overlay_window.comment_queue.clear()
+            if self.overlay_window.flow_timer.isActive():
+                self.overlay_window.flow_timer.stop()
+        
+        # スレッド存在チェック
         if not self.check_thread_exists(thread_id):
             self.show_error(f"スレッド {thread_id} は存在しません（.dat ファイルが見つかりません）。")
-            logger.warning(f"スレッド {thread_id} の .dat ファイルが存在しないため、接続を中止します。")
             self.statusBar().showMessage(f"スレッド {thread_id} は存在しません")
             return
         
@@ -377,6 +395,7 @@ class MainWindow(QMainWindow):
         self.current_thread_title = thread_title
         logger.info(f"スレッド接続 - ID: {thread_id}, タイトル: {thread_title}")
         
+        # オーバーレイウィンドウの初期化または再利用
         if not self.overlay_window or not self.overlay_window.isVisible():
             self.overlay_window = CommentOverlayWindow(None)
             self.overlay_window.update_settings(self.settings)
@@ -390,6 +409,8 @@ class MainWindow(QMainWindow):
             self.overlay_window.show()
             logger.info(f"コメントオーバーレイウィンドウを開きました: x={overlay_x}, y={overlay_y}, width={overlay_width}, height={overlay_height}")
         else:
+            self.overlay_window.comments.clear()
+            self.overlay_window.row_usage.clear()
             logger.info("既存のコメントオーバーレイウィンドウを再利用します")
         
         self.start_thread_fetcher(thread_id, thread_title, is_past_thread=is_past_thread)
