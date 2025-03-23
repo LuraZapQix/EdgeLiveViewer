@@ -312,7 +312,7 @@ class NextThreadFinder(QThread):
             self.search_finished.emit(False)
     
     def find_next_thread(self):
-        """次スレを検索するロジック（パターン１とパターン２の両方を考慮）"""
+        """次スレを検索するロジック（●がある場合はそれのみで判断、それ以外は従来のロジック）"""
         try:
             url = "https://bbs.eddibb.cc/liveedge/subject.txt"
             response = requests.get(url, timeout=5)
@@ -320,9 +320,9 @@ class NextThreadFinder(QThread):
             
             lines = response.text.splitlines()
             
-            # 現在のタイトルの数字を抽出
-            current_number, has_number = self.extract_last_number(self.thread_title)
-            logger.info(f"現在のスレッド: {self.thread_title}, 末尾の数字: {current_number if has_number else 'なし'}")
+            # 前スレが「●」で始まるかを判定
+            starts_with_mark = self.thread_title.startswith('●')
+            logger.info(f"現在のスレッド: {self.thread_title}, 前スレが「●」で始まるか: {starts_with_mark}")
             
             # 候補スレッドを格納するリスト
             candidates = []
@@ -337,60 +337,75 @@ class NextThreadFinder(QThread):
                 if thread_id == self.thread_id:
                     continue
                 
-                # タイトルの類似度を計算
-                similarity = difflib.SequenceMatcher(None, self.thread_title, title).ratio()
-                
-                # 類似度が0.3以上の場合に候補として検討
-                if similarity >= 0.3:
-                    next_number, _ = self.extract_last_number(title)
-                    candidates.append({
-                        "id": thread_id,
-                        "title": title,
-                        "similarity": similarity,
-                        "number": next_number,
-                        "is_star": bool(re.search(r'★(\d+)$', title))  # ★付きかどうかを記録
-                    })
+                # 前スレが「●」で始まる場合
+                if starts_with_mark:
+                    if title.startswith('●'):
+                        candidates.append({
+                            "id": thread_id,
+                            "title": title
+                        })
+                # 前スレが「●」で始まらない場合
+                else:
+                    # タイトルの類似度を計算
+                    similarity = difflib.SequenceMatcher(None, self.thread_title, title).ratio()
+                    
+                    # 類似度が0.3以上の場合に候補として検討
+                    if similarity >= 0.3:
+                        next_number, _ = self.extract_last_number(title)
+                        candidates.append({
+                            "id": thread_id,
+                            "title": title,
+                            "similarity": similarity,
+                            "number": next_number,
+                            "is_star": bool(re.search(r'★(\d+)$', title))
+                        })
             
             if not candidates:
-                logger.info("類似度0.3以上のスレッドが見つかりませんでした")
+                logger.info("次スレ候補が見つかりませんでした")
                 return None
             
-            # 次スレの期待される数字を計算
-            expected_numbers = []
-            if not has_number:
-                # 数字がない場合、次スレは「★2」「Part.2」「Part2」を想定
-                expected_numbers = [2]
+            # 前スレが「●」で始まる場合
+            if starts_with_mark:
+                # 「●」付きのスレッドから最初のものを選択
+                best_candidate = candidates[0]
+                logger.info(f"次スレを発見しました（●ルール）: {best_candidate['title']} (ID: {best_candidate['id']})")
+                return {
+                    "id": best_candidate["id"],
+                    "title": best_candidate["title"]
+                }
+            # 前スレが「●」で始まらない場合
             else:
-                # 数字がある場合、+1した値を想定
-                expected_numbers = [current_number + 1]
-                expected_numbers.append(current_number)  # 元の数字を保持
-            
-            # 候補から次スレを選択
-            valid_candidates = []
-            for candidate in candidates:
-                next_num = candidate["number"]
-                # パターン２: 数字が期待値に一致する場合
-                if next_num in expected_numbers:
-                    valid_candidates.append(candidate)
-                # パターン１: 前スレに数字があっても「★1」「★2」を許容
-                elif candidate["is_star"] and next_num in [1, 2]:
-                    valid_candidates.append(candidate)
-                # 前スレに数字がない場合、「★2」「Part.2」「Part2」を許容
-                elif not has_number and next_num == 2:
-                    if re.search(r'(★2|Part\.2|Part2)(?:\s+.*)?$', candidate["title"]):
+                # 次スレの期待される数字を計算
+                current_number, has_number = self.extract_last_number(self.thread_title)
+                expected_numbers = []
+                if not has_number:
+                    expected_numbers = [2]  # 数字がない場合、次スレは「2」を想定
+                else:
+                    expected_numbers = [current_number + 1, current_number]  # +1または同値を許容
+                
+                # 候補から次スレを選択
+                valid_candidates = []
+                for candidate in candidates:
+                    next_num = candidate["number"]
+                    if next_num in expected_numbers:
                         valid_candidates.append(candidate)
-            
-            if not valid_candidates:
-                logger.info(f"期待される数字 {expected_numbers} または次スレパターンに一致するスレッドが見つかりませんでした")
-                return None
-            
-            # 最も類似度が高い候補を選択
-            best_candidate = max(valid_candidates, key=lambda c: c["similarity"])
-            logger.info(f"次スレを発見しました: {best_candidate['title']} (ID: {best_candidate['id']}, 類似度: {best_candidate['similarity']:.2f})")
-            return {
-                "id": best_candidate["id"],
-                "title": best_candidate["title"]
-            }
+                    elif candidate["is_star"] and next_num in [1, 2]:
+                        valid_candidates.append(candidate)
+                    elif not has_number and next_num == 2:
+                        if re.search(r'(★2|Part\.2|Part2)(?:\s+.*)?$', candidate["title"]):
+                            valid_candidates.append(candidate)
+                
+                if not valid_candidates:
+                    logger.info(f"期待される数字 {expected_numbers} または次スレパターンに一致するスレッドが見つかりませんでした")
+                    return None
+                
+                # 最も類似度が高い候補を選択
+                best_candidate = max(valid_candidates, key=lambda c: c["similarity"])
+                logger.info(f"次スレを発見しました: {best_candidate['title']} (ID: {best_candidate['id']}, 類似度: {best_candidate['similarity']:.2f})")
+                return {
+                    "id": best_candidate["id"],
+                    "title": best_candidate["title"]
+                }
         
         except requests.RequestException as e:
             logger.error(f"subject.txt の取得に失敗しました: {str(e)}")
