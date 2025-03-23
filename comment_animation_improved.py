@@ -105,7 +105,9 @@ class CommentOverlayWindow(QWidget):
         if self.current_batch_size == 0 or self.current_update_interval <= 0:
             return 200  # デフォルト
 
+        # 1秒あたりのコメント数
         comments_per_sec = self.current_batch_size / self.current_update_interval
+        # 基本間隔（ミリ秒）
         base_interval = int((self.current_update_interval * 1000) / self.current_batch_size)
 
         if comments_per_sec <= 2.0:
@@ -114,7 +116,13 @@ class CommentOverlayWindow(QWidget):
         else:
             # コメントが多い場合、ベース間隔に±20%の揺らぎ
             variance = int(base_interval * 0.2)
-            return random.randint(max(50, base_interval - variance), min(500, base_interval + variance))
+            lower_bound = max(50, base_interval - variance)
+            upper_bound = min(500, base_interval + variance)
+            # 範囲が逆転しないように調整
+            start = min(lower_bound, upper_bound)
+            end = max(lower_bound, upper_bound)
+            logger.debug(f"Flow interval: base={base_interval}, variance={variance}, range=({start}, {end})")
+            return random.randint(start, end)
 
     def adjust_flow_timer(self):
         """更新間隔とコメント数に基づいてflow_timer間隔を動的に調整"""
