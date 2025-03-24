@@ -13,13 +13,14 @@ import json
 import re
 import requests
 import logging
+import zstandard as zstd
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                           QHBoxLayout, QLabel, QPushButton, QLineEdit, 
-                           QTabWidget, QTableWidget, QTableWidgetItem, 
-                           QHeaderView, QComboBox, QMessageBox, QInputDialog, 
-                           QMenu, QDialog, QTextEdit)  # QTextEdit を追加
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont, QColor
+                             QHBoxLayout, QLabel, QPushButton, QLineEdit, 
+                             QTabWidget, QTableWidget, QTableWidgetItem, 
+                             QHeaderView, QComboBox, QMessageBox, QInputDialog, 
+                             QMenu, QDialog, QTextEdit, QFormLayout, QGroupBox, QDockWidget)
+from PyQt5.QtCore import Qt, QTimer, QUrl, QPoint
+from PyQt5.QtGui import QFont, QColor, QDesktopServices
 
 from thread_fetcher_improved import ThreadFetcher, CommentFetcher, NextThreadFinder
 from comment_animation_improved import CommentOverlayWindow
@@ -28,18 +29,165 @@ from settings_dialog import SettingsDialog
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('EdgeLiveViewer')
 
+class WriteWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("書き込み")
+        self.setMinimumWidth(400)
+        self.setup_ui()
+        self._dragging = False
+        self._offset = QPoint()
+    
+    def setup_ui(self):
+        write_layout = QVBoxLayout()
+        
+        name_mail_layout = QHBoxLayout()
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("エッヂの名無し")
+        self.name_input.setFixedWidth(200)
+        name_mail_layout.addWidget(QLabel("名前:"))
+        name_mail_layout.addWidget(self.name_input)
+        
+        self.mail_input = QLineEdit()
+        self.mail_input.setPlaceholderText("sage または空欄")
+        self.mail_input.setFixedWidth(200)
+        name_mail_layout.addWidget(QLabel("メール:"))
+        name_mail_layout.addWidget(self.mail_input)
+        name_mail_layout.addStretch()
+        write_layout.addLayout(name_mail_layout)
+        
+        comment_button_layout = QHBoxLayout()
+        self.comment_input = QLineEdit()
+        self.comment_input.setPlaceholderText("コメントを入力")
+        comment_button_layout.addWidget(QLabel("本文:"))
+        comment_button_layout.addWidget(self.comment_input)
+        
+        self.post_button = QPushButton("書き込む")
+        self.post_button.setFixedWidth(100)
+        comment_button_layout.addWidget(self.post_button)
+        
+        self.toggle_button = QPushButton("分離")
+        self.toggle_button.setFixedWidth(100)
+        comment_button_layout.addWidget(self.toggle_button)
+        
+        write_layout.addLayout(comment_button_layout)
+        self.setLayout(write_layout)
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._offset = event.pos()
+            event.accept()
+    
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            self.move(self.mapToGlobal(event.pos() - self._offset))
+            event.accept()
+    
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = False
+            event.accept()
+    
+    def closeEvent(self, event):
+        if not self.parent():
+            event.ignore()
+            logger.info("書き込みウィンドウの閉じる操作を無効化しました。ドッキングで戻してください。")
+        else:
+            event.accept()
+
+class RetryDialog(QDialog):
+    def __init__(self, error_message, retry_callback, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("書き込みエラー")
+        self.error_message = error_message
+        self.retry_callback = retry_callback
+        self.remaining_time = 5
+        self.setup_ui()
+        self.start_countdown()
+
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        
+        # エラーメッセージ
+        error_label = QLabel(self.error_message)
+        error_label.setWordWrap(True)
+        layout.addWidget(error_label)
+        
+        # ボタンレイアウト
+        button_layout = QHBoxLayout()
+        
+        self.cancel_button = QPushButton("キャンセル")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(self.cancel_button)
+        
+        self.retry_button = QPushButton(f"リトライ ({self.remaining_time})")
+        self.retry_button.clicked.connect(self.accept)
+        button_layout.addWidget(self.retry_button)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+
+    def start_countdown(self):
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_countdown)
+        self.timer.start(1000)  # 1秒ごとに更新
+
+    def update_countdown(self):
+        self.remaining_time -= 1
+        self.retry_button.setText(f"リトライ ({self.remaining_time})")
+        if self.remaining_time <= 0:
+            self.timer.stop()
+            self.accept()  # 5秒経過で自動リトライ
+
+class AuthDialog(QDialog):
+    def __init__(self, auth_code, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("認証が必要です")
+        self.auth_code = auth_code
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        
+        # 各ラベルを個別に追加して間隔を調整
+        label1 = QLabel("初回書き込みまたはトークン無効化のため認証が必要です。")
+        label2 = QLabel(f"認証コード: <b>{self.auth_code}</b>")
+        label2.setTextFormat(Qt.RichText)
+        label3 = QLabel("以下のURLにアクセスし、認証を行ってください:")
+        url_label = QLabel('<a href="https://bbs.eddibb.cc/auth-code">https://bbs.eddibb.cc/auth-code</a>')
+        url_label.setTextFormat(Qt.RichText)
+        url_label.setOpenExternalLinks(True)
+        label4 = QLabel("認証成功後、32文字のトークン（例: #xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx）を入力してください。")
+        
+        layout.addWidget(label1)
+        layout.addSpacing(10)  # 10pxの余白
+        layout.addWidget(label2)
+        layout.addSpacing(10)
+        layout.addWidget(label3)
+        layout.addWidget(url_label)
+        layout.addSpacing(10)
+        layout.addWidget(label4)
+        
+        ok_button = QPushButton("OK")
+        ok_button.setFixedWidth(100)
+        ok_button.clicked.connect(self.accept)
+        layout.addWidget(ok_button, alignment=Qt.AlignCenter)
+        
+        self.setLayout(layout)
+
 class NGTextDialog(QDialog):
     """NGコメント/名前用のカスタムダイアログ"""
     def __init__(self, initial_text, title, parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setMinimumWidth(300)  # 横幅
+        self.setMinimumWidth(300)
         
         layout = QVBoxLayout()
         
         self.text_edit = QTextEdit()
         self.text_edit.setPlainText(initial_text)
-        self.text_edit.setMinimumHeight(150)  #縦
+        self.text_edit.setMinimumHeight(150)
         layout.addWidget(self.text_edit)
         
         button_layout = QHBoxLayout()
@@ -73,6 +221,13 @@ class MainWindow(QMainWindow):
         
         self.current_thread_id = None
         self.current_thread_title = None
+        self.is_past_thread = False
+        
+        self.auth_token = None
+        self.load_auth_token()
+        
+        self.write_widget = None  # 書き込みウィジェットを保持
+        self.is_docked = True  # ドッキング状態を管理
         
         self.init_ui()
         
@@ -82,11 +237,12 @@ class MainWindow(QMainWindow):
         self.start_thread_fetcher_initial()
         self.show_tutorial_if_first_launch()
         
-        # ヘルスチェックタイマーを追加
         self.health_timer = QTimer(self)
         self.health_timer.timeout.connect(self.check_fetcher_health)
-        self.health_timer.start(30000)  # 30秒ごとにチェック
-    
+        self.health_timer.start(30000)
+
+        self.last_post_time = 0
+
     def init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -105,10 +261,9 @@ class MainWindow(QMainWindow):
         
         self.tab_widget = QTabWidget()
         
-        # スレッド一覧タブ
+        # スレッド一覧タブ（変更なし）
         thread_tab = QWidget()
         thread_layout = QVBoxLayout(thread_tab)
-        
         sort_layout = QHBoxLayout()
         sort_layout.addWidget(QLabel("並び替え:"))
         self.sort_combo = QComboBox()
@@ -116,14 +271,11 @@ class MainWindow(QMainWindow):
         self.sort_combo.addItem("新着順", "date")
         self.sort_combo.currentIndexChanged.connect(self.change_sort_order)
         sort_layout.addWidget(self.sort_combo)
-        
         refresh_button = QPushButton("更新")
         refresh_button.clicked.connect(self.refresh_thread_list)
         sort_layout.addStretch()
         sort_layout.addWidget(refresh_button)
-        
         thread_layout.addLayout(sort_layout)
-        
         self.thread_table = QTableWidget(0, 4)
         self.thread_table.setHorizontalHeaderLabels(["スレッドタイトル", "レス数", "勢い", "作成日時"])
         self.thread_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -131,16 +283,15 @@ class MainWindow(QMainWindow):
         self.thread_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.thread_table.doubleClicked.connect(self.thread_selected)
         thread_layout.addWidget(self.thread_table)
-        
         self.tab_widget.addTab(thread_tab, "スレッド一覧")
         
         # スレッド詳細タブ
         self.detail_tab = QWidget()
-        detail_layout = QVBoxLayout(self.detail_tab)
+        self.detail_layout = QVBoxLayout(self.detail_tab)
         
         self.thread_title_label = QLabel("接続中のスレッド: 未接続")
         self.thread_title_label.setAlignment(Qt.AlignCenter)
-        detail_layout.addWidget(self.thread_title_label)
+        self.detail_layout.addWidget(self.thread_title_label)
         
         self.detail_table = QTableWidget(0, 4)
         self.detail_table.setHorizontalHeaderLabels(["番号", "本文", "名前", "ID"])
@@ -153,7 +304,14 @@ class MainWindow(QMainWindow):
         self.detail_table.setColumnWidth(3, 100)
         self.detail_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.detail_table.customContextMenuRequested.connect(self.show_context_menu)
-        detail_layout.addWidget(self.detail_table)
+        self.detail_layout.addWidget(self.detail_table)
+        
+        # 書き込みウィジェット
+        self.write_widget = WriteWidget(self)
+        self.write_widget.post_button.clicked.connect(self.post_comment)
+        self.write_widget.comment_input.returnPressed.connect(self.post_comment)
+        self.write_widget.toggle_button.clicked.connect(self.toggle_write_widget)
+        self.detail_layout.addWidget(self.write_widget)
         
         self.tab_widget.addTab(self.detail_tab, "スレッド詳細")
         
@@ -169,11 +327,37 @@ class MainWindow(QMainWindow):
         
         self.statusBar().showMessage("準備完了")
 
+    def toggle_write_widget(self):
+        """書き込み欄の分離/ドッキングを切り替え"""
+        if self.write_widget is None:
+            logger.error("書き込みウィジェットが初期化されていません")
+            return
+        
+        if self.is_docked:
+            # 分離
+            self.write_widget.setParent(None)
+            # 最前面＋フレームレスでタスクバーをトリガーしない
+            self.write_widget.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+            self.write_widget.hide()
+            self.write_widget.show()
+            self.write_widget.move(self.pos().x() + 50, self.pos().y() + 50)
+            self.write_widget.toggle_button.setText("ドッキング")
+            self.is_docked = False
+            logger.info("書き込み欄を分離しました（フレームレス＋最前面）")
+        else:
+            # ドッキング
+            self.detail_layout.addWidget(self.write_widget)
+            self.write_widget.setWindowFlags(Qt.Widget)
+            self.write_widget.show()
+            self.write_widget.toggle_button.setText("分離")
+            self.is_docked = True
+            logger.info("書き込み欄をドッキングしました")
+    
     def check_fetcher_health(self):
         if self.comment_fetcher and not self.comment_fetcher.isRunning():
             logger.warning("CommentFetcher が停止している可能性があります。再起動します")
             self.start_thread_fetcher(self.current_thread_id, self.current_thread_title)
-
+    
     def show_context_menu(self, pos):
         row = self.detail_table.currentRow()
         if row < 0:
@@ -181,13 +365,13 @@ class MainWindow(QMainWindow):
         
         menu = QMenu(self)
         
-        ng_id = self.detail_table.item(row, 3).text()  # ID列
-        ng_text = self.detail_table.item(row, 1).text().strip()  # 本文列
-        ng_name = self.detail_table.item(row, 2).text()  # 名前列
+        ng_id = self.detail_table.item(row, 3).text()
+        ng_text = self.detail_table.item(row, 1).text().strip()
+        ng_name = self.detail_table.item(row, 2).text()
         
         add_id_action = menu.addAction("NG IDに追加する")
         add_comment_action = menu.addAction("NG 本文に追加する")
-        add_name_action = menu.addAction("NG 名前を追加する")  # 新規追加
+        add_name_action = menu.addAction("NG 名前を追加する")
         open_settings_action = menu.addAction("NG設定")
         
         add_id_action.triggered.connect(lambda: self.add_ng_id(ng_id))
@@ -196,7 +380,7 @@ class MainWindow(QMainWindow):
         open_settings_action.triggered.connect(self.open_ng_settings)
         
         menu.exec_(self.detail_table.mapToGlobal(pos))
-
+    
     def add_ng_id(self, ng_id):
         if ng_id and ng_id not in self.settings["ng_ids"]:
             self.settings["ng_ids"].append(ng_id)
@@ -240,6 +424,171 @@ class MainWindow(QMainWindow):
             logger.info("設定を更新しました")
             print("現在の self.settings:", self.settings)
     
+    def load_auth_token(self):
+        """設定ファイルから認証トークンを読み込む"""
+        try:
+            if "auth_token" in self.settings:
+                self.auth_token = self.settings["auth_token"]
+                logger.info(f"認証トークンを読み込みました: {self.auth_token}")
+        except Exception as e:
+            logger.error(f"認証トークンの読み込みに失敗: {str(e)}")
+    
+    def save_auth_token(self, token):
+        """認証トークンを設定ファイルに保存"""
+        self.auth_token = token
+        self.settings["auth_token"] = token
+        self.save_settings()
+        logger.info(f"認証トークンを保存しました: {token}")
+    
+    def send_post_request(self, thread_id, name, mail, comment):
+        """エッヂに書き込みリクエストを送信"""
+        url = "https://bbs.eddibb.cc/test/bbs.cgi"
+        # 汎用的なUser-Agent（必要最低限）
+        headers = {
+            "User-Agent": "EdgeLiveViewer/1.0",  # カスタムアプリ名に変更
+            "Referer": f"https://bbs.eddibb.cc/liveedge/{thread_id}",
+            "Accept": "*/*",
+            "Accept-Encoding": "identity",  # zstd回避
+            "Content-Type": "application/x-www-form-urlencoded; charset=Shift_JIS",
+            "Origin": "https://bbs.eddibb.cc",
+        }
+        data = {
+            "bbs": "liveedge",
+            "key": thread_id,
+            "FROM": name.encode("shift_jis"),
+            "mail": mail.encode("shift_jis") if mail else b"",
+            "MESSAGE": comment.encode("shift_jis"),
+            "submit": "書き込む".encode("shift_jis"),
+        }
+        if self.auth_token:
+            data["mail"] = f"#{self.auth_token}".encode("shift_jis")
+        
+        session = requests.Session()
+        try:
+            if self.auth_token:
+                session.cookies.set("edge-token", self.auth_token, domain="bbs.eddibb.cc")
+            tinker_token = self.settings.get("tinker_token", "")
+            if tinker_token:
+                session.cookies.set("tinker-token", tinker_token, domain="bbs.eddibb.cc")
+            
+            session.get(f"https://bbs.eddibb.cc/liveedge/{thread_id}", headers=headers, timeout=5)
+            
+            logger.info(f"送信データ: {data}")
+            logger.info(f"送信クッキー: {session.cookies.get_dict()}")
+            response = session.post(url, headers=headers, data=data, timeout=10)
+            
+            logger.info(f"レスポンスステータス: {response.status_code}")
+            logger.info(f"レスポンスヘッダー: {dict(response.headers)}")
+            
+            response_text = response.content.decode("shift_jis", errors="replace")
+            logger.info(f"レスポンス本文: {response_text[:500]}")
+            
+            if response.status_code == 200 and "<title>書きこみました</title>" in response_text:
+                new_tinker = session.cookies.get("tinker-token")
+                if new_tinker:
+                    self.settings["tinker_token"] = new_tinker
+                    self.save_settings()
+                    logger.info(f"tinker-tokenを更新: {new_tinker}")
+                new_edge = session.cookies.get("edge-token")
+                if new_edge and new_edge != self.auth_token:
+                    self.auth_token = new_edge
+                    self.save_auth_token(new_edge)
+                    logger.info(f"edge-tokenを更新: {new_edge}")
+                return True, response_text
+            
+            auth_code_match = re.search(r'<input[^>]*name="auth-code"[^>]*value="([^"]+)"[^>]*>|認証コード[\'"](\d{6})[\'"]', response_text)
+            if auth_code_match:
+                auth_code = auth_code_match.group(1) or auth_code_match.group(2)
+                new_edge = session.cookies.get("edge-token")
+                if new_edge and new_edge != self.auth_token:
+                    logger.info(f"認証コードレスポンスにedge-tokenが含まれていますが無視: {new_edge}")
+                return False, auth_code
+            return False, response_text
+        except requests.RequestException as e:
+            logger.error(f"書き込みリクエストに失敗: {str(e)}")
+            return False, str(e)
+
+    def post_comment(self):
+        """コメントをエッヂに投稿する"""
+        if not self.current_thread_id:
+            QMessageBox.warning(self, "エラー", "スレッドに接続してください。")
+            return
+        
+        if self.is_past_thread:
+            QMessageBox.critical(self, "書き込みエラー", "過去ログには書き込みできません。")
+            return
+        
+        name = self.write_widget.name_input.text().strip() or "エッヂの名無し"  # 修正
+        mail = self.write_widget.mail_input.text().strip()  # 修正
+        comment = self.write_widget.comment_input.text().strip()  # 修正
+        
+        if not comment:
+            QMessageBox.warning(self, "エラー", "コメントを入力してください。")
+            return
+        
+        # 5秒以内の投稿チェック
+        current_time = time.time()
+        if current_time - self.last_post_time < 5:
+            remaining = 5 - (current_time - self.last_post_time)
+            QMessageBox.warning(self, "投稿制限", f"5秒以内の連続投稿はできません。あと {remaining:.1f}秒 お待ちください。")
+            return
+        
+        success, response = self.send_post_request(self.current_thread_id, name, mail, comment)
+        
+        if success:
+            self.last_post_time = time.time()
+            self.write_widget.comment_input.clear()  # 修正
+            self.statusBar().showMessage("書き込みが完了しました。")
+        else:
+            if isinstance(response, str) and re.match(r"^\d{6}$", response):
+                self.show_auth_dialog(response)
+            else:
+                self.handle_post_error(response, name, mail, comment)
+
+    def handle_post_error(self, response_text, name, mail, comment):
+        """書き込みエラーの処理"""
+        logger.info(f"エラーレスポンス全文: {response_text}")
+        error_msg = re.search(r"ＥＲＲＯＲ.*?エラー！([^<]+)", response_text)
+        error_detail = error_msg.group(1).strip() if error_msg else f"不明なエラー: {response_text[:200]}"
+        
+        if "短期間に書き込みすぎです" in error_detail:
+            dialog = RetryDialog(error_detail, lambda: self.retry_post(name, mail, comment), self)
+            if dialog.exec_() == QDialog.Accepted:
+                self.retry_post(name, mail, comment)
+        elif "対象の'スレッド'が見つかりません" in error_detail and self.is_past_thread:
+            QMessageBox.critical(self, "書き込みエラー", "過去ログには書き込みできません。")
+        else:
+            QMessageBox.critical(self, "書き込みエラー", f"書き込みに失敗しました。\n理由: {error_detail}")
+
+    def retry_post(self, name, mail, comment):
+        """リトライ時の投稿処理"""
+        success, response = self.send_post_request(self.current_thread_id, name, mail, comment)
+        if success:
+            self.last_post_time = time.time()
+            self.write_widget.comment_input.clear()  # 修正
+            self.statusBar().showMessage("書き込みが完了しました。")
+        else:
+            if isinstance(response, str) and re.match(r"^\d{6}$", response):
+                self.show_auth_dialog(response)
+            else:
+                self.handle_post_error(response, name, mail, comment)
+    
+    def show_auth_dialog(self, auth_code):
+        """カスタム認証ダイアログを表示"""
+        dialog = AuthDialog(auth_code, self)
+        dialog.exec_()
+        
+        token, ok = QInputDialog.getText(
+            self, "トークン入力", "認証後に表示されたトークン（#を含む）を入力:",
+            QLineEdit.Normal, "#"
+        )
+        if ok and token and re.match(r"#[a-f0-9]{32}", token):
+            self.auth_token = token[1:]  # #を除去
+            self.save_auth_token(self.auth_token)
+            QMessageBox.information(self, "認証成功", "トークンを保存しました。再度書き込みを試してください。")
+        elif ok:
+            QMessageBox.warning(self, "入力エラー", "トークンは#で始まる32文字の英数字である必要があります。")
+    
     def save_settings(self):
         try:
             settings_dir = os.path.expanduser("~/.edge_live_viewer")
@@ -250,7 +599,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"設定の保存に失敗しました: {str(e)}")
             self.show_error(f"設定の保存に失敗しました: {str(e)}")
-
+    
     def start_thread_fetcher_initial(self):
         if self.thread_fetcher is not None:
             self.thread_fetcher.stop()
@@ -278,7 +627,7 @@ class MainWindow(QMainWindow):
             self.comment_fetcher.stop()
         
         playback_speed = self.settings.get("playback_speed", 1.0)
-        comment_delay = self.settings.get("comment_delay", 0) if not is_past_thread else 0  # リアルタイム時のみ適用
+        comment_delay = self.settings.get("comment_delay", 0) if not is_past_thread else 0
         self.comment_fetcher = CommentFetcher(
             thread_id=thread_id,
             thread_title=thread_title,
@@ -286,7 +635,7 @@ class MainWindow(QMainWindow):
             is_past_thread=is_past_thread,
             playback_speed=playback_speed,
             comment_delay=comment_delay,
-            parent=self  # 親として MainWindow を明示的に指定
+            parent=self
         )
         self.comment_fetcher.comments_fetched.connect(self.display_comments)
         self.comment_fetcher.thread_filled.connect(self.handle_thread_filled)
@@ -299,7 +648,7 @@ class MainWindow(QMainWindow):
         self.thread_title_label.setText(f"接続中のスレッド: {thread_title}")
         self.detail_table.setRowCount(0)
         logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title}, 過去ログ: {is_past_thread}, 再生速度: {playback_speed}x, 遅延: {comment_delay}秒)")
-
+    
     def update_thread_list(self, threads):
         self.thread_table.setRowCount(0)
         
@@ -333,13 +682,14 @@ class MainWindow(QMainWindow):
             thread_id = self.thread_table.item(selected_row, 0).data(Qt.UserRole)
             thread_title = self.thread_table.item(selected_row, 0).text()
             
-            # 次スレ検索が動作中の場合、停止
             if self.next_thread_finder is not None and self.next_thread_finder.isRunning():
                 self.next_thread_finder.stop()
                 logger.info(f"次スレ検索を停止しました（スレッド一覧から選択: {thread_id}）")
                 self.next_thread_finder = None
             
             self.connect_to_thread_by_id(thread_id, thread_title)
+            self.tab_widget.setCurrentIndex(1)  # スレッド詳細タブに切り替え
+            logger.info(f"スレッド {thread_id} を選択し、スレッド詳細タブに切り替えました")
     
     def connect_to_thread(self):
         input_text = self.thread_input.text().strip()
@@ -359,43 +709,38 @@ class MainWindow(QMainWindow):
         self.connect_to_thread_by_id(thread_id)
     
     def connect_to_thread_by_id(self, thread_id, thread_title=None):
-        # 次スレ検索が動作中の場合、停止
         if self.next_thread_finder is not None and self.next_thread_finder.isRunning():
             self.next_thread_finder.stop()
             logger.info(f"次スレ検索を停止しました（新しいスレッド接続: {thread_id}）")
             self.next_thread_finder = None
         
-        # 既存のコメントフェッチャーを停止
         if self.comment_fetcher is not None:
             self.comment_fetcher.stop()
             if not self.comment_fetcher.isFinished():
                 logger.warning(f"既存の CommentFetcher {self.current_thread_id} が終了していない可能性があります")
         
-        # オーバーレイウィンドウのリセット
         if self.overlay_window:
             self.overlay_window.comment_queue.clear()
             if self.overlay_window.flow_timer.isActive():
                 self.overlay_window.flow_timer.stop()
         
-        # スレッド存在チェック
         if not self.check_thread_exists(thread_id):
             self.show_error(f"スレッド {thread_id} は存在しません（.dat ファイルが見つかりません）。")
             self.statusBar().showMessage(f"スレッド {thread_id} は存在しません")
             return
         
-        is_past_thread = False
+        self.is_past_thread = False
         if not thread_title:
             thread_title = self.get_thread_title(thread_id)
             if not thread_title:
                 thread_title = f"スレッド {thread_id} (過去ログ)"
-                is_past_thread = True
+                self.is_past_thread = True
                 logger.info(f"スレッド {thread_id} は subject.txt にありません。過去ログとして接続します。")
         
         self.current_thread_id = thread_id
         self.current_thread_title = thread_title
-        logger.info(f"スレッド接続 - ID: {thread_id}, タイトル: {thread_title}")
+        logger.info(f"スレッド接続 - ID: {thread_id}, タイトル: {thread_title}, 過去ログ: {self.is_past_thread}")
         
-        # オーバーレイウィンドウの初期化または再利用
         if not self.overlay_window or not self.overlay_window.isVisible():
             self.overlay_window = CommentOverlayWindow(None)
             self.overlay_window.update_settings(self.settings)
@@ -407,13 +752,13 @@ class MainWindow(QMainWindow):
             overlay_height = self.settings.get("overlay_height", 800)
             self.overlay_window.setGeometry(overlay_x, overlay_y, overlay_width, overlay_height)
             self.overlay_window.show()
-            logger.info(f"コメントオーバーレイウィンドウを開きました: x={overlay_x}, y={overlay_y}, width={overlay_width}, height={overlay_height}")
+            logger.info(f"コメントオーバーレイウィンドウを開きました: x={overlay_x}, y={overlay_y}, width={overlay_width}, height={overlay_height}")  # height を overlay_height に修正
         else:
             self.overlay_window.comments.clear()
             self.overlay_window.row_usage.clear()
             logger.info("既存のコメントオーバーレイウィンドウを再利用します")
         
-        self.start_thread_fetcher(thread_id, thread_title, is_past_thread=is_past_thread)
+        self.start_thread_fetcher(thread_id, thread_title, is_past_thread=self.is_past_thread)
         self.statusBar().showMessage(f"スレッド {thread_id} - {thread_title} に接続しました")
     
     def check_thread_exists(self, thread_id):
@@ -423,7 +768,7 @@ class MainWindow(QMainWindow):
             return response.status_code == 200
         except:
             return False
-        
+    
     def get_thread_title(self, thread_id):
         try:
             url = "https://bbs.eddibb.cc/liveedge/subject.txt"
@@ -452,18 +797,16 @@ class MainWindow(QMainWindow):
         QApplication.instance().setProperty("comment_time", time.time())
         logger.info(f"表示対象のコメント数: {len(comments)}")
         
-        # オーバーレイにコメントをキュー経由で追加
-        self.overlay_window.add_comment_batch(comments)  # 一括で add_comment から add_comment_batch に変更
+        self.overlay_window.add_comment_batch(comments)
         
-        # スレッド詳細タブを更新（変更なし）
         current_row_count = self.detail_table.rowCount()
         for comment in comments:
             name = comment["name"]
-            if "</b>(" in name:  # ワッチョイ付き
+            if "</b>(" in name:
                 base_name, wacchoi = name.split("</b>(")
                 wacchoi = wacchoi.rstrip(")<b>")
                 formatted_name = f"{base_name}({wacchoi})"
-            else:  # ワッチョイなし
+            else:
                 formatted_name = name
             
             self.detail_table.insertRow(current_row_count)
@@ -473,7 +816,7 @@ class MainWindow(QMainWindow):
             self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
             current_row_count += 1
         
-        self.detail_table.scrollToBottom()  # 最新レスに自動スクロール
+        self.detail_table.scrollToBottom()
     
     def handle_thread_filled(self, thread_id, thread_title):
         logger.info(f"スレッド {thread_id} が埋まりました。")
@@ -542,11 +885,11 @@ class MainWindow(QMainWindow):
             "font_color": "#FFFFFF",
             "font_family": "MSP Gothic",
             "font_shadow_direction": "bottom-right",
-            "font_shadow_directions": ["bottom-right"],  # 単一文字列からリストに変更
+            "font_shadow_directions": ["bottom-right"],
             "font_shadow_color": "#000000",
             "comment_speed": 6.0,
-            "comment_delay": 0,  # 新規追加
-            "display_position": "top",  # "center" から "top" に変更
+            "comment_delay": 0,
+            "display_position": "top",
             "max_comments": 40,
             "window_opacity": 0.8,
             "update_interval": 5,
@@ -561,9 +904,12 @@ class MainWindow(QMainWindow):
             "hide_anchor_comments": False,
             "hide_url_comments": False,
             "spacing": 10,
-            "ng_ids": [],  # NGリスト追加
+            "ng_ids": [],
             "ng_names": [],
-            "ng_texts": []
+            "ng_texts": [],
+            "auth_token": None,  # 認証トークンのデフォルト値
+            "tinker_token": None,
+            "auth_token": None
         }
         
         try:
@@ -576,7 +922,6 @@ class MainWindow(QMainWindow):
                         default_settings[key] = value
         except Exception as e:
             logger.error(f"設定の読み込みに失敗しました: {str(e)}")
-        
         return default_settings
     
     def save_window_position(self, x, y, width, height):
@@ -593,7 +938,7 @@ class MainWindow(QMainWindow):
             logger.info(f"ウィンドウ位置とサイズを保存しました: x={x}, y={y}, width={width}, height={height}")
         except Exception as e:
             logger.error(f"ウィンドウ位置とサイズの保存に失敗しました: {str(e)}")
-
+    
     def show_tutorial_if_first_launch(self):
         if self.settings.get("first_launch", True):
             QMessageBox.information(self, "エッヂ実況ビュアーへようこそ",
@@ -602,25 +947,16 @@ class MainWindow(QMainWindow):
                                   "使い方：\n"
                                   "1. スレッド一覧からスレッドを選択するか、スレッドURLまたはIDを入力して接続します。\n"
                                   "2. 透過ウィンドウが表示され、コメントが流れ始めます。\n"
-                                  "3. 設定ボタンから、フォントサイズや色などをカスタマイズできます。\n\n"
+                                  "3. 設定ボタンから、フォントサイズや色などをカスタマイズできます。\n"
+                                  "4. スレッド詳細タブからコメントを書き込めます（初回は認証が必要）。\n\n"
                                   "それでは、お楽しみください！")
             
             self.settings["first_launch"] = False
-            
-            try:
-                settings_dir = os.path.expanduser("~/.edge_live_viewer")
-                os.makedirs(settings_dir, exist_ok=True)
-                
-                settings_file = os.path.join(settings_dir, "settings.json")
-                with open(settings_file, "w", encoding="utf-8") as f:
-                    json.dump(self.settings, f, indent=4)
-            except Exception as e:
-                logger.error(f"設定の保存に失敗しました: {str(e)}")
+            self.save_settings()
     
     def show_error(self, message):
         logger.error(message)
-        # QMessageBox.critical(self, "エラー", message)  # 一時的にコメントアウト
-        self.statusBar().showMessage(f"エラー: {message[:50]}...")  # 短縮表示
+        self.statusBar().showMessage(f"エラー: {message[:50]}...")
     
     def closeEvent(self, event):
         if self.thread_fetcher is not None:

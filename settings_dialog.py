@@ -239,7 +239,7 @@ class SettingsDialog(QDialog):
         self.comment_delay_spin.setRange(0, 300)  # 0～300秒
         self.comment_delay_spin.setValue(self.settings.get("comment_delay", 0))  # デフォルト0秒
         self.comment_delay_spin.setSuffix("秒")
-        network_form.addRow("コメントを遅延秒数:", self.comment_delay_spin)
+        network_form.addRow("コメント遅延秒数:", self.comment_delay_spin)
         
         network_group.setLayout(network_form)
         network_layout.addWidget(network_group)
