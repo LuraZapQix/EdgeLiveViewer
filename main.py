@@ -18,7 +18,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QPushButton, QLineEdit, 
                              QTabWidget, QTableWidget, QTableWidgetItem, 
                              QHeaderView, QComboBox, QMessageBox, QInputDialog, 
-                             QMenu, QDialog, QTextEdit, QFormLayout, QGroupBox, QDockWidget)
+                             QMenu, QDialog, QTextEdit, QFormLayout, QGroupBox, QDockWidget,
+                             QCheckBox)
 from PyQt5.QtCore import Qt, QTimer, QUrl, QPoint
 from PyQt5.QtGui import QFont, QColor, QDesktopServices
 
@@ -34,29 +35,46 @@ class WriteWidget(QWidget):
         super().__init__(parent)
         self.setWindowTitle("書き込み")
         self.setMinimumWidth(400)
-        self.setup_ui()
         self._dragging = False
         self._offset = QPoint()
+        self._force_close = False
+        self.setup_ui()
+        
+        main_window = parent if isinstance(parent, MainWindow) else None
+        self.hide_on_detach = main_window.settings.get("hide_name_mail_on_detach", False) if main_window else False
+        self.hide_checkbox.setChecked(self.hide_on_detach)
     
     def setup_ui(self):
         write_layout = QVBoxLayout()
+        # レイアウトのマージンとスペーシングを縮める
+        write_layout.setContentsMargins(2, 2, 2, 2)  # 上下左右のマージンを5pxに
+        write_layout.setSpacing(4)  # 内部の間隔を2pxに縮小
         
-        name_mail_layout = QHBoxLayout()
+        # 名前、メール、チェックボックスを同じ行に配置
+        self.name_mail_layout = QHBoxLayout()
+        self.name_mail_layout.setSpacing(4)  # 水平間隔も縮小
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("エッヂの名無し")
         self.name_input.setFixedWidth(200)
-        name_mail_layout.addWidget(QLabel("名前:"))
-        name_mail_layout.addWidget(self.name_input)
+        self.name_mail_layout.addWidget(QLabel("名前:"))
+        self.name_mail_layout.addWidget(self.name_input)
         
         self.mail_input = QLineEdit()
         self.mail_input.setPlaceholderText("sage または空欄")
-        self.mail_input.setFixedWidth(200)
-        name_mail_layout.addWidget(QLabel("メール:"))
-        name_mail_layout.addWidget(self.mail_input)
-        name_mail_layout.addStretch()
-        write_layout.addLayout(name_mail_layout)
+        self.mail_input.setFixedWidth(150)
+        self.name_mail_layout.addWidget(QLabel("メール:"))
+        self.name_mail_layout.addWidget(self.mail_input)
         
+        self.hide_checkbox = QCheckBox("分離時に非表示")
+        self.hide_checkbox.stateChanged.connect(self.update_hide_setting)
+        self.name_mail_layout.addWidget(self.hide_checkbox)
+        
+        self.name_mail_layout.addStretch()
+        write_layout.addLayout(self.name_mail_layout)
+        
+        # コメントとボタンのレイアウト
         comment_button_layout = QHBoxLayout()
+        comment_button_layout.setSpacing(4)  # 水平間隔も縮小
         self.comment_input = QLineEdit()
         self.comment_input.setPlaceholderText("コメントを入力")
         comment_button_layout.addWidget(QLabel("本文:"))
@@ -88,14 +106,54 @@ class WriteWidget(QWidget):
         if event.button() == Qt.LeftButton:
             self._dragging = False
             event.accept()
-    
+
+    def update_hide_setting(self, state):
+        """チェックボックスの状態を更新し、設定に保存"""
+        self.hide_on_detach = (state == Qt.Checked)
+        if self.parent() and isinstance(self.parent(), MainWindow):
+            self.parent().settings["hide_name_mail_on_detach"] = self.hide_on_detach
+            self.parent().save_settings()
+            logger.info(f"分離時に非表示設定を更新: {self.hide_on_detach}")
+
+    def set_name_mail_visible(self, visible):
+        """名前とメール欄の表示/非表示を切り替え"""
+        self.name_input.setVisible(visible)
+        self.mail_input.setVisible(visible)
+        for i in range(self.name_mail_layout.count()):
+            item = self.name_mail_layout.itemAt(i)
+            if item.widget() and isinstance(item.widget(), QLabel):
+                item.widget().setVisible(visible)
+        if visible:
+            self.hide_checkbox.setVisible(True)  # ドッキング時は常に表示
+        else:
+            self.hide_checkbox.setVisible(not self.hide_on_detach)  # 分離時: チェック済みなら非表示
+        logger.info(f"名前とメール欄の表示状態を変更: {visible}, チェックボックス: {self.hide_checkbox.isVisible()}")
+
+    def force_close(self):
+        self._force_close = True
+        self.close()
+
     def closeEvent(self, event):
-        if not self.parent():
+        if not self.parent() and not self.isHidden() and not self._force_close:
             event.ignore()
             logger.info("書き込みウィンドウの閉じる操作を無効化しました。ドッキングで戻してください。")
         else:
             event.accept()
+            logger.info("書き込みウィンドウを閉じました")
 
+    def adjust_height(self):
+        """チェック状態に応じたウィンドウの高さを計算して設定"""
+        # ベース高さ（入力欄とボタンのみ、マージンを最小化）
+        base_height = self.comment_input.height() + self.post_button.height() + 5  # マージンを10→5に縮小
+        if not self.hide_on_detach or self.parent():  # チェックなし or ドッキング時
+            # フル高さ（名前欄を追加、マージンを最小化）
+            full_height = base_height + self.name_input.height() + 2  # マージンを5→2に縮小
+            self.setFixedHeight(full_height)
+            logger.info(f"ウィンドウ高さをフルサイズに設定: {full_height}, コメント: {self.comment_input.height()}, ボタン: {self.post_button.height()}, 名前: {self.name_input.height()}")
+        else:  # チェック済みで分離時
+            self.setFixedHeight(base_height)
+            logger.info(f"ウィンドウ高さを縮小サイズに設定: {base_height}, コメント: {self.comment_input.height()}, ボタン: {self.post_button.height()}")
+            
 class RetryDialog(QDialog):
     def __init__(self, error_message, retry_callback, parent=None):
         super().__init__(parent)
@@ -212,22 +270,17 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 600)
         
         self.settings = self.load_settings()
-        print("main.py の self.settings:", self.settings)
-        
         self.overlay_window = None
         self.thread_fetcher = None
         self.comment_fetcher = None
         self.next_thread_finder = None
-        
         self.current_thread_id = None
         self.current_thread_title = None
         self.is_past_thread = False
-        
         self.auth_token = None
         self.load_auth_token()
-        
-        self.write_widget = None  # 書き込みウィジェットを保持
-        self.is_docked = True  # ドッキング状態を管理
+        self.write_widget = None
+        self.is_docked = True
         
         self.init_ui()
         
@@ -240,7 +293,6 @@ class MainWindow(QMainWindow):
         self.health_timer = QTimer(self)
         self.health_timer.timeout.connect(self.check_fetcher_health)
         self.health_timer.start(30000)
-
         self.last_post_time = 0
 
     def init_ui(self):
@@ -328,7 +380,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("準備完了")
 
     def toggle_write_widget(self):
-        """書き込み欄の分離/ドッキングを切り替え"""
         if self.write_widget is None:
             logger.error("書き込みウィジェットが初期化されていません")
             return
@@ -336,9 +387,13 @@ class MainWindow(QMainWindow):
         if self.is_docked:
             # 分離
             self.write_widget.setParent(None)
-            # 最前面＋フレームレスでタスクバーをトリガーしない
             self.write_widget.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
             self.write_widget.hide()
+            if self.write_widget.hide_on_detach:
+                self.write_widget.set_name_mail_visible(False)
+            else:
+                self.write_widget.set_name_mail_visible(True)
+            self.write_widget.adjust_height()  # 高さを調整
             self.write_widget.show()
             self.write_widget.move(self.pos().x() + 50, self.pos().y() + 50)
             self.write_widget.toggle_button.setText("ドッキング")
@@ -348,6 +403,8 @@ class MainWindow(QMainWindow):
             # ドッキング
             self.detail_layout.addWidget(self.write_widget)
             self.write_widget.setWindowFlags(Qt.Widget)
+            self.write_widget.set_name_mail_visible(True)
+            self.write_widget.adjust_height()  # ドッキング時も高さを調整
             self.write_widget.show()
             self.write_widget.toggle_button.setText("分離")
             self.is_docked = True
@@ -884,7 +941,6 @@ class MainWindow(QMainWindow):
             "font_shadow": 2,
             "font_color": "#FFFFFF",
             "font_family": "MSP Gothic",
-            "font_shadow_direction": "bottom-right",
             "font_shadow_directions": ["bottom-right"],
             "font_shadow_color": "#000000",
             "comment_speed": 6.0,
@@ -907,9 +963,9 @@ class MainWindow(QMainWindow):
             "ng_ids": [],
             "ng_names": [],
             "ng_texts": [],
-            "auth_token": None,  # 認証トークンのデフォルト値
+            "auth_token": None,
             "tinker_token": None,
-            "auth_token": None
+            "hide_name_mail_on_detach": False  # 新しい設定項目
         }
         
         try:
@@ -970,6 +1026,13 @@ class MainWindow(QMainWindow):
         
         if self.overlay_window is not None and self.overlay_window.isVisible():
             self.overlay_window.close()
+        
+        # 分離状態の書き込みウィンドウを閉じる
+        if self.write_widget is not None:
+            if not self.is_docked:  # 分離状態の場合
+                self.write_widget.force_close()  # 強制終了メソッドを呼び出し
+                logger.info("分離状態の書き込みウィンドウを閉じました")
+            # ドッキング状態の場合は親（MainWindow）の終了で自動的に閉じる
         
         event.accept()
 
