@@ -358,7 +358,7 @@ class MainWindow(QMainWindow):
         # 列幅を設定
         self.thread_table.setColumnWidth(1, 60)   # レス数: 60px
         self.thread_table.setColumnWidth(2, 60)   # 勢い: 60px
-        self.thread_table.setColumnWidth(3, 150)  # 作成日時: 150px
+        self.thread_table.setColumnWidth(3, 80)  # 作成日時: 80px
         
         thread_layout.addWidget(self.thread_table)
         self.tab_widget.addTab(thread_tab, "スレッド一覧")
@@ -628,28 +628,29 @@ class MainWindow(QMainWindow):
             "Origin": "https://bbs.eddibb.cc",
         }
 
-        def to_safe_shift_jis(text):
-            """Shift_JISでエンコードできない文字をHTMLエンティティに変換"""
-            result = ""
-            for char in text:
-                try:
-                    char.encode("shift_jis")  # Shift_JISでエンコード可能かチェック
-                    result += char
-                except UnicodeEncodeError:
-                    # エンコードできない場合、HTMLエンティティに変換
-                    result += f"&#{ord(char)};"
-            return result.encode("shift_jis")
+        def to_shift_jis(text):
+            try:
+                return text.encode("shift_jis")
+            except UnicodeEncodeError:
+                result = ""
+                for char in text:
+                    try:
+                        result += char.encode("shift_jis").decode("shift_jis")
+                    except UnicodeEncodeError:
+                        result += f"&#{ord(char)};"
+                return result.encode("shift_jis")
 
         data = {
             "bbs": "liveedge",
             "key": thread_id,
-            "FROM": to_safe_shift_jis(name),
-            "mail": to_safe_shift_jis(mail) if mail else b"",
-            "MESSAGE": to_safe_shift_jis(comment),
+            "FROM": to_shift_jis(name),
+            "mail": to_shift_jis(mail) if mail else b"",
+            "MESSAGE": to_shift_jis(comment),
             "submit": "書き込む".encode("shift_jis"),
         }
         if self.auth_token:
-            data["mail"] = to_safe_shift_jis(f"#{self.auth_token}")
+            data["mail"] = to_shift_jis(f"#{self.auth_token}")
+            logger.info(f"認証トークンを適用: {self.auth_token}")
 
         session = requests.Session()
         try:
@@ -658,15 +659,54 @@ class MainWindow(QMainWindow):
             tinker_token = self.settings.get("tinker_token", "")
             if tinker_token:
                 session.cookies.set("tinker-token", tinker_token, domain="bbs.eddibb.cc")
-            
-            session.get(f"https://bbs.eddibb.cc/liveedge/{thread_id}", headers=headers, timeout=5)
-            
+
+            pre_response = session.get(
+                f"https://bbs.eddibb.cc/liveedge/{thread_id}",
+                headers=headers,
+                timeout=5
+            )
+            logger.info(f"事前リクエスト: ステータス={pre_response.status_code}")
+
             logger.info(f"送信データ: {data}")
+            logger.info(f"送信クッキー: {session.cookies.get_dict()}")
             response = session.post(url, headers=headers, data=data, timeout=10)
-            response.raise_for_status()
-            return True, response.text
+
+            try:
+                response_text = response.content.decode("shift_jis")
+            except UnicodeDecodeError:
+                response_text = response.content.decode("utf-8", errors="replace")
+                logger.warning("Shift_JISデコード失敗、UTF-8で代替")
+
+            logger.info(f"レスポンスステータス: {response.status_code}")
+            logger.info(f"レスポンス本文: {response_text[:500]}...")
+
+            if response.status_code == 200 and "<title>書きこみました</title>" in response_text:
+                new_tinker = session.cookies.get("tinker-token")
+                if new_tinker and new_tinker != tinker_token:
+                    self.settings["tinker_token"] = new_tinker
+                    self.save_settings()
+                    logger.info(f"tinker-tokenを更新: {new_tinker}")
+                new_edge = session.cookies.get("edge-token")
+                if new_edge and new_edge != self.auth_token:
+                    self.auth_token = new_edge
+                    self.save_auth_token(new_edge)
+                    logger.info(f"edge-tokenを更新: {new_edge}")
+                logger.info("書き込みが正常に完了しました")
+                return True, response_text
+
+            auth_code_match = re.search(r"^\d{6}$", response_text.strip()) or re.search(
+                r'<input[^>]*name="auth-code"[^>]*value="([^"]+)"[^>]*>|認証コード[\'"](\d{6})[\'"]',
+                response_text
+            )
+            if auth_code_match:
+                auth_code = auth_code_match.group(0) if auth_code_match.group(0).isdigit() else (auth_code_match.group(1) or auth_code_match.group(2))
+                logger.info(f"認証コードを受信: {auth_code}")
+                return False, auth_code
+
+            logger.error("書き込み失敗: 成功条件を満たしていません")
+            return False, response_text
         except requests.RequestException as e:
-            logger.error(f"書き込みエラー: {e}")
+            logger.error(f"書き込みリクエストに失敗: {str(e)}")
             return False, str(e)
 
     def post_comment(self):
@@ -692,6 +732,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "投稿制限", f"5秒以内の連続投稿はできません。あと {remaining:.1f}秒 お待ちください。")
             return
         
+        # 認証トークンがなくてもリクエストを送信し、サーバーからの応答を処理
         success, response = self.send_post_request(self.current_thread_id, name, mail, comment)
         
         if success:
@@ -700,15 +741,47 @@ class MainWindow(QMainWindow):
             self.my_comments[comment_key] = {
                 "text": comment,
                 "number": None,
-                "thread_id": self.current_thread_id  # スレッドIDを追加
+                "thread_id": self.current_thread_id
             }
             self.write_widget.comment_input.clear()
             self.statusBar().showMessage("書き込みが完了しました。")
+            logger.info("コメント投稿が成功しました")
         else:
             if isinstance(response, str) and re.match(r"^\d{6}$", response):
+                # サーバーから返された6桁の認証コードをダイアログに渡す
                 self.show_auth_dialog(response)
             else:
                 self.handle_post_error(response, name, mail, comment)
+
+    def show_auth_dialog(self, auth_code):
+        """カスタム認証ダイアログを表示"""
+        dialog = AuthDialog(auth_code, self)
+        dialog.exec_()
+        
+        # 認証後にトークンを入力
+        token, ok = QInputDialog.getText(
+            self, "トークン入力", "認証後に表示されたトークン（#を含む）を入力:",
+            QLineEdit.Normal, "#"
+        )
+        if ok and token and re.match(r"#[a-f0-9]{32}", token):
+            self.auth_token = token[1:]  # #を除去
+            self.save_auth_token(self.auth_token)
+            QMessageBox.information(self, "認証成功", "トークンを保存しました。再度書き込みを試してください。")
+            # 認証成功後、即座に再投稿を試みる
+            self.post_comment()
+        elif ok:
+            QMessageBox.warning(self, "入力エラー", "トークンは#で始まる32文字の英数字である必要があります。")
+
+    def save_settings(self):
+        try:
+            settings_dir = os.path.expanduser("~/.edge_live_viewer")
+            os.makedirs(settings_dir, exist_ok=True)
+            settings_file = os.path.join(settings_dir, "settings.json")
+            with open(settings_file, "w", encoding="utf-8") as f:
+                json.dump(self.settings, f, indent=4)
+        except Exception as e:
+            logger.error(f"設定の保存に失敗しました: {str(e)}")
+            self.show_error(f"設定の保存に失敗しました: {str(e)}")
 
     def display_comments(self, comments):
         if self.overlay_window is None:
@@ -785,33 +858,6 @@ class MainWindow(QMainWindow):
                 self.show_auth_dialog(response)
             else:
                 self.handle_post_error(response, name, mail, comment)
-    
-    def show_auth_dialog(self, auth_code):
-        """カスタム認証ダイアログを表示"""
-        dialog = AuthDialog(auth_code, self)
-        dialog.exec_()
-        
-        token, ok = QInputDialog.getText(
-            self, "トークン入力", "認証後に表示されたトークン（#を含む）を入力:",
-            QLineEdit.Normal, "#"
-        )
-        if ok and token and re.match(r"#[a-f0-9]{32}", token):
-            self.auth_token = token[1:]  # #を除去
-            self.save_auth_token(self.auth_token)
-            QMessageBox.information(self, "認証成功", "トークンを保存しました。再度書き込みを試してください。")
-        elif ok:
-            QMessageBox.warning(self, "入力エラー", "トークンは#で始まる32文字の英数字である必要があります。")
-    
-    def save_settings(self):
-        try:
-            settings_dir = os.path.expanduser("~/.edge_live_viewer")
-            os.makedirs(settings_dir, exist_ok=True)
-            settings_file = os.path.join(settings_dir, "settings.json")
-            with open(settings_file, "w", encoding="utf-8") as f:
-                json.dump(self.settings, f, indent=4)
-        except Exception as e:
-            logger.error(f"設定の保存に失敗しました: {str(e)}")
-            self.show_error(f"設定の保存に失敗しました: {str(e)}")
     
     def start_thread_fetcher_initial(self):
         if self.thread_fetcher is not None:
