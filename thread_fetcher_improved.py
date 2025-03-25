@@ -133,7 +133,7 @@ class CommentFetcher(QThread):
     error_occurred = pyqtSignal(str)
     thread_over_1000 = pyqtSignal(str)
     
-    def __init__(self, thread_id, thread_title="", update_interval=0.5, is_past_thread=False, playback_speed=1.0, comment_delay=0, parent=None):
+    def __init__(self, thread_id, thread_title="", update_interval=0.5, is_past_thread=False, playback_speed=1.0, comment_delay=0, start_number=None, parent=None):
         super().__init__(parent)
         self.thread_id = thread_id
         self.thread_title = thread_title
@@ -141,6 +141,7 @@ class CommentFetcher(QThread):
         self.is_past_thread = is_past_thread
         self.playback_speed = max(1.0, min(2.0, playback_speed))
         self.comment_delay = comment_delay  # 修正: 引数として追加し、正しく代入
+        self.start_number = start_number  # 開始位置を追加
         self.running = True
         self.last_res_index = -1
         self.max_retries = 3
@@ -180,7 +181,7 @@ class CommentFetcher(QThread):
         while self.running:
             try:
                 url = f"https://bbs.eddibb.cc/liveedge/dat/{self.thread_id}.dat"
-                response = requests.get(url, timeout=5)  # タイムアウトを5秒に設定
+                response = requests.get(url, timeout=5)
                 response.raise_for_status()
                 
                 lines = response.text.split('\n')
@@ -188,7 +189,8 @@ class CommentFetcher(QThread):
                 
                 if self.is_first_fetch:
                     if self.is_past_thread:
-                        start_index = 0
+                        # start_numberが指定されている場合、その位置から開始
+                        start_index = max(0, (self.start_number - 1) if self.start_number else 0)
                     elif len(lines) > 5:
                         start_index = max(0, len(lines) - 5)
                     else:
@@ -267,7 +269,7 @@ class CommentFetcher(QThread):
                 logger.warning(f"コメント取得失敗 ({retry_count}/{self.max_retries}): {str(e)}")
                 if retry_count >= self.max_retries:
                     self.error_occurred.emit(f"コメントの取得に繰り返し失敗しました: {str(e)}")
-                    break  # リトライ上限で終了
+                    break
                 self.safe_sleep(self.retry_delay)
             except Exception as e:
                 self.error_occurred.emit(f"コメントの取得に失敗しました: {str(e)}")

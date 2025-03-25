@@ -309,8 +309,9 @@ class MainWindow(QMainWindow):
         self.health_timer.timeout.connect(self.check_fetcher_health)
         self.health_timer.start(30000)
         self.last_post_time = 0
-
-        
+        self.my_comments = {}  
+        self.current_thread_id = None
+        self.detail_table.doubleClicked.connect(self.start_playback_from_comment)
 
     def init_ui(self):
         central_widget = QWidget()
@@ -396,6 +397,71 @@ class MainWindow(QMainWindow):
         
         self.statusBar().showMessage("準備完了")
 
+    def start_playback_from_comment(self):
+        """スレッド詳細画面のレスをダブルクリックして再生開始"""
+        if not self.is_past_thread:
+            logger.info("リアルタイムスレッドでは再生位置の変更は無効です")
+            QMessageBox.information(self, "情報", "この機能は過去ログ再生時のみ使用可能です。")
+            return
+
+        selected_row = self.detail_table.currentRow()
+        if selected_row < 0:
+            logger.warning("選択された行がありません")
+            return
+
+        comment_number = int(self.detail_table.item(selected_row, 0).text())
+        logger.info(f"ダブルクリックで選択されたコメント番号: {comment_number}")
+
+        # 現在のCommentFetcherを停止
+        if self.comment_fetcher and self.comment_fetcher.isRunning():
+            self.comment_fetcher.stop()
+            logger.info("既存のCommentFetcherを停止しました")
+
+        # CommentOverlayWindowをリセット
+        if self.overlay_window:
+            self.overlay_window.comments.clear()
+            self.overlay_window.comment_queue.clear()
+            self.overlay_window.row_usage.clear()
+            if self.overlay_window.flow_timer.isActive():
+                self.overlay_window.flow_timer.stop()
+            logger.info("CommentOverlayWindowをリセットしました")
+
+        # 新しいCommentFetcherを開始（指定位置から）
+        self.start_thread_fetcher_from_position(
+            self.current_thread_id,
+            self.current_thread_title,
+            start_number=comment_number
+        )
+        self.statusBar().showMessage(f"コメント番号 {comment_number} から再生を開始しました")
+
+    def start_thread_fetcher_from_position(self, thread_id, thread_title, start_number=None):
+        """指定された番号からCommentFetcherを開始"""
+        if self.comment_fetcher and self.comment_fetcher.isRunning():
+            self.comment_fetcher.stop()
+
+        playback_speed = self.settings.get("playback_speed", 1.0)
+        comment_delay = 0  # 過去ログではデフォルトで遅延なし
+        self.comment_fetcher = CommentFetcher(
+            thread_id=thread_id,
+            thread_title=thread_title,
+            update_interval=self.settings["update_interval"],
+            is_past_thread=True,  # 過去ログモードを強制
+            playback_speed=playback_speed,
+            comment_delay=comment_delay,
+            start_number=start_number,  # 新しい引数を追加
+            parent=self
+        )
+        self.comment_fetcher.comments_fetched.connect(self.display_comments)
+        self.comment_fetcher.thread_filled.connect(self.handle_thread_filled)
+        self.comment_fetcher.error_occurred.connect(self.show_error)
+        self.comment_fetcher.thread_over_1000.connect(self.on_thread_over_1000)
+        self.comment_fetcher.start()
+
+        self.current_thread_id = thread_id
+        self.current_thread_title = thread_title
+        self.thread_title_label.setText(f"接続中のスレッド: {thread_title}")
+        logger.info(f"スレッド {thread_id} の再生を番号 {start_number} から開始しました (タイトル: {thread_title}, 再生速度: {playback_speed}x)")
+
     def toggle_write_widget(self):
         if self.write_widget is None:
             logger.error("書き込みウィジェットが初期化されていません")
@@ -416,7 +482,7 @@ class MainWindow(QMainWindow):
             opacity = self.settings.get("write_window_opacity", 1.0)
             self.write_widget.setWindowOpacity(opacity)  # 再起動後も確実に適用
             logger.info(f"分離時に透過度を設定: {opacity*100}%")
-            new_x = docked_pos.x() - 40
+            new_x = docked_pos.x() - 50
             new_y = docked_pos.y() - 30
             self.write_widget.move(new_x, new_y)
             self.write_widget.show()
@@ -606,7 +672,7 @@ class MainWindow(QMainWindow):
             return False, str(e)
 
     def post_comment(self):
-        """コメントをエッヂに投稿する"""
+        """コメントをエッジに投稿する"""
         if not self.current_thread_id:
             QMessageBox.warning(self, "エラー", "スレッドに接続してください。")
             return
@@ -615,15 +681,14 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "書き込みエラー", "過去ログには書き込みできません。")
             return
         
-        name = self.write_widget.name_input.text().strip() or "エッヂの名無し"  # 修正
-        mail = self.write_widget.mail_input.text().strip()  # 修正
-        comment = self.write_widget.comment_input.text().strip()  # 修正
+        name = self.write_widget.name_input.text().strip() or "エッヂの名無し"
+        mail = self.write_widget.mail_input.text().strip()
+        comment = self.write_widget.comment_input.text().strip()
         
         if not comment:
             QMessageBox.warning(self, "エラー", "コメントを入力してください。")
             return
         
-        # 5秒以内の投稿チェック
         current_time = time.time()
         if current_time - self.last_post_time < 5:
             remaining = 5 - (current_time - self.last_post_time)
@@ -634,13 +699,70 @@ class MainWindow(QMainWindow):
         
         if success:
             self.last_post_time = time.time()
-            self.write_widget.comment_input.clear()  # 修正
+            comment_key = f"{current_time}_{comment}"
+            self.my_comments[comment_key] = {
+                "text": comment,
+                "number": None,
+                "thread_id": self.current_thread_id  # スレッドIDを追加
+            }
+            self.write_widget.comment_input.clear()
             self.statusBar().showMessage("書き込みが完了しました。")
         else:
             if isinstance(response, str) and re.match(r"^\d{6}$", response):
                 self.show_auth_dialog(response)
             else:
                 self.handle_post_error(response, name, mail, comment)
+
+    def display_comments(self, comments):
+        if self.overlay_window is None:
+            return
+        
+        QApplication.instance().setProperty("comment_time", time.time())
+        logger.info(f"表示対象のコメント数: {len(comments)}")
+        
+        # 自分のコメントの番号を確定
+        for comment in comments:
+            comment_text = comment["text"].strip()
+            comment_number = comment["number"]
+            for key, my_comment in list(self.my_comments.items()):
+                my_comment_text = my_comment["text"].strip()
+                if (my_comment["number"] is None and 
+                    my_comment_text == comment_text and 
+                    my_comment["thread_id"] == self.current_thread_id):
+                    self.my_comments[key]["number"] = comment_number
+                    if self.overlay_window:
+                        self.overlay_window.add_my_comment(comment_number, comment_text)
+                        logger.info(f"自分のコメントを確定: 番号={comment_number}, テキスト={comment_text}, スレッド={self.current_thread_id}")
+                    break
+        
+        self.overlay_window.add_comment_batch(comments)
+        
+        current_row_count = self.detail_table.rowCount()
+        for comment in comments:
+            name = comment["name"]
+            if "</b>(" in name:
+                base_name, wacchoi = name.split("</b>(")
+                wacchoi = wacchoi.rstrip(")<b>")
+                formatted_name = f"{base_name}({wacchoi})"
+            else:
+                formatted_name = name
+            
+            self.detail_table.insertRow(current_row_count)
+            self.detail_table.setItem(current_row_count, 0, QTableWidgetItem(str(comment["number"])))
+            self.detail_table.setItem(current_row_count, 1, QTableWidgetItem(comment["text"]))
+            self.detail_table.setItem(current_row_count, 2, QTableWidgetItem(formatted_name))
+            self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
+            current_row_count += 1
+        
+        # スクロールバーの状態をチェック
+        scrollbar = self.detail_table.verticalScrollBar()
+        is_at_bottom = scrollbar.value() >= scrollbar.maximum()
+        
+        if is_at_bottom:
+            self.detail_table.scrollToBottom()
+            logger.debug("自動スクロール実行: ユーザーが一番下にいるため")
+        else:
+            logger.debug("自動スクロールスキップ: ユーザーが手動で上部を閲覧中")
 
     def handle_post_error(self, response_text, name, mail, comment):
         """書き込みエラーの処理"""
@@ -719,7 +841,7 @@ class MainWindow(QMainWindow):
         self.thread_fetcher.start()
         logger.info("スレッド一覧を更新しました")
     
-    def start_thread_fetcher(self, thread_id, thread_title, is_past_thread=False):
+    def start_thread_fetcher(self, thread_id, thread_title, is_past_thread=False, start_number=None):
         if self.comment_fetcher and self.comment_fetcher.isRunning():
             self.comment_fetcher.stop()
         
@@ -732,6 +854,7 @@ class MainWindow(QMainWindow):
             is_past_thread=is_past_thread,
             playback_speed=playback_speed,
             comment_delay=comment_delay,
+            start_number=start_number,  # 追加
             parent=self
         )
         self.comment_fetcher.comments_fetched.connect(self.display_comments)
@@ -744,8 +867,8 @@ class MainWindow(QMainWindow):
         self.current_thread_title = thread_title
         self.thread_title_label.setText(f"接続中のスレッド: {thread_title}")
         self.detail_table.setRowCount(0)
-        logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title}, 過去ログ: {is_past_thread}, 再生速度: {playback_speed}x, 遅延: {comment_delay}秒)")
-    
+        logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title}, 過去ログ: {is_past_thread}, 再生速度: {playback_speed}x, 遅延: {comment_delay}秒, 開始番号: {start_number})")
+
     def update_thread_list(self, threads):
         self.thread_table.setRowCount(0)
         
@@ -789,20 +912,45 @@ class MainWindow(QMainWindow):
             logger.info(f"スレッド {thread_id} を選択し、スレッド詳細タブに切り替えました")
     
     def connect_to_thread(self):
+        """スレッドURL/IDの手動入力による接続処理"""
         input_text = self.thread_input.text().strip()
+        
+        # 入力が空の場合、ユーザーに通知して終了
         if not input_text:
             QMessageBox.warning(self, "エラー", "スレッドURLまたはIDを入力してください。")
+            logger.info("スレッドURL/IDが入力されていません")
             return
         
-        thread_id = input_text
-        url_match = re.search(r'/liveedge/(\d+)', input_text)
-        if url_match:
-            thread_id = url_match.group(1)
-        
-        if not thread_id.isdigit():
-            QMessageBox.warning(self, "エラー", "無効なスレッドURLまたはIDです。")
+        # URLまたはIDからスレッドIDを抽出
+        thread_id_match = re.search(r'(\d{10,})', input_text)
+        if not thread_id_match:
+            QMessageBox.warning(self, "エラー", "有効なスレッドURLまたはIDを入力してください（例: https://bbs.eddibb.cc/test/read.cgi/liveedge/1742132339/ または 1742132339）。")
+            logger.info(f"無効なスレッドURL/IDが入力されました: {input_text}")
             return
         
+        thread_id = thread_id_match.group(1)
+        
+        # 既存の接続と同じ場合は何もしない
+        if thread_id == self.current_thread_id:
+            logger.info(f"既にスレッド {thread_id} に接続済みです")
+            self.statusBar().showMessage(f"既にスレッド {thread_id} に接続済みです")
+            return
+        
+        # 状態を更新
+        self.current_thread_id = thread_id
+        self.is_past_thread = False
+        self.last_post_time = 0
+        logger.info(f"スレッドに接続を開始しました: {thread_id}")
+        
+        # コメント番号をリセットし、自分のコメントを復元
+        if self.overlay_window:
+            self.overlay_window.reset_my_comments()
+            for key, my_comment in self.my_comments.items():
+                if my_comment["thread_id"] == self.current_thread_id and my_comment["number"] is not None:
+                    self.overlay_window.add_my_comment(my_comment["number"], my_comment["text"])
+                    logger.info(f"スレッド {thread_id} の自分のコメントを復元: 番号={my_comment['number']}, テキスト={my_comment['text']}")
+        
+        # スレッドに接続
         self.connect_to_thread_by_id(thread_id)
     
     def connect_to_thread_by_id(self, thread_id, thread_title=None):
@@ -834,6 +982,14 @@ class MainWindow(QMainWindow):
                 self.is_past_thread = True
                 logger.info(f"スレッド {thread_id} は subject.txt にありません。過去ログとして接続します。")
         
+        # スレッド切り替え時にmy_comment_numbersをリセット
+        if self.overlay_window:
+            self.overlay_window.reset_my_comments()
+            for key, my_comment in self.my_comments.items():
+                if my_comment["thread_id"] == thread_id and my_comment["number"] is not None:
+                    self.overlay_window.add_my_comment(my_comment["number"], my_comment["text"])
+                    logger.info(f"スレッド {thread_id} の自分のコメントを復元: 番号={my_comment['number']}, テキスト={my_comment['text']}")
+
         self.current_thread_id = thread_id
         self.current_thread_title = thread_title
         logger.info(f"スレッド接続 - ID: {thread_id}, タイトル: {thread_title}, 過去ログ: {self.is_past_thread}")
@@ -849,7 +1005,7 @@ class MainWindow(QMainWindow):
             overlay_height = self.settings.get("overlay_height", 800)
             self.overlay_window.setGeometry(overlay_x, overlay_y, overlay_width, overlay_height)
             self.overlay_window.show()
-            logger.info(f"コメントオーバーレイウィンドウを開きました: x={overlay_x}, y={overlay_y}, width={overlay_width}, height={overlay_height}")  # height を overlay_height に修正
+            logger.info(f"コメントオーバーレイウィンドウを開きました: x={overlay_x}, y={overlay_y}, width={overlay_width}, height={overlay_height}")
         else:
             self.overlay_window.comments.clear()
             self.overlay_window.row_usage.clear()
@@ -886,34 +1042,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"スレッドタイトル取得に失敗しました: {str(e)}")
             return None
-    
-    def display_comments(self, comments):
-        if self.overlay_window is None:
-            return
-        
-        QApplication.instance().setProperty("comment_time", time.time())
-        logger.info(f"表示対象のコメント数: {len(comments)}")
-        
-        self.overlay_window.add_comment_batch(comments)
-        
-        current_row_count = self.detail_table.rowCount()
-        for comment in comments:
-            name = comment["name"]
-            if "</b>(" in name:
-                base_name, wacchoi = name.split("</b>(")
-                wacchoi = wacchoi.rstrip(")<b>")
-                formatted_name = f"{base_name}({wacchoi})"
-            else:
-                formatted_name = name
-            
-            self.detail_table.insertRow(current_row_count)
-            self.detail_table.setItem(current_row_count, 0, QTableWidgetItem(str(comment["number"])))
-            self.detail_table.setItem(current_row_count, 1, QTableWidgetItem(comment["text"]))
-            self.detail_table.setItem(current_row_count, 2, QTableWidgetItem(formatted_name))
-            self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
-            current_row_count += 1
-        
-        self.detail_table.scrollToBottom()
     
     def handle_thread_filled(self, thread_id, thread_title):
         logger.info(f"スレッド {thread_id} が埋まりました。")
@@ -983,17 +1111,17 @@ class MainWindow(QMainWindow):
     
     def load_settings(self):
         default_settings = {
-            "font_size": 24,
+            "font_size": 31,
             "font_weight": 75,
             "font_shadow": 2,
             "font_color": "#FFFFFF",
-            "font_family": "MSP Gothic",
+            "font_family": "MS PGothic",
             "font_shadow_directions": ["bottom-right"],
             "font_shadow_color": "#000000",
             "comment_speed": 6.0,
             "comment_delay": 0,
             "display_position": "top",
-            "max_comments": 40,
+            "max_comments": 80,
             "window_opacity": 0.8,
             "update_interval": 5,
             "playback_speed": 1.0,
@@ -1006,7 +1134,7 @@ class MainWindow(QMainWindow):
             "overlay_height": 800,
             "hide_anchor_comments": False,
             "hide_url_comments": False,
-            "spacing": 10,
+            "spacing": 30,
             "ng_ids": [],
             "ng_names": [],
             "ng_texts": [],

@@ -5,6 +5,7 @@ import sys
 import random
 import logging
 import time
+import re  # ここを追加
 from PyQt5.QtWidgets import (QWidget, QApplication)
 from PyQt5.QtCore import (Qt, QTimer, QRect, QPoint, QSize)
 from PyQt5.QtGui import (QFont, QColor, QPainter, QFontMetrics, QPen, QBrush)
@@ -20,19 +21,19 @@ class CommentOverlayWindow(QWidget):
         self.setGeometry(100, 100, 600, 800)
 
         self.comments = []
-        self.max_comments = 40
-        self.font_size = 24
+        self.max_comments = 80
+        self.font_size = 31
         self.font_weight = 75
         self.font_shadow = 2
         self.font_color = QColor("#FFFFFF")
-        self.font_family = "MSP Gothic"
+        self.font_family = "MS PGothic"
         self.font_shadow_directions = ["bottom-right"]
         self.font_shadow_color = QColor("#000000")
         self.comment_speed = 6.0
         self.display_position = "top"
         self.hide_anchor_comments = False
         self.hide_url_comments = False
-        self.spacing = 20
+        self.spacing = 30
         self.comment_queue = []
         self.comment_queue_max_size = 100  # キューサイズの制限を追加
 
@@ -73,6 +74,17 @@ class CommentOverlayWindow(QWidget):
         self.ng_names = []
         self.ng_texts = []
         self.row_usage = {}
+        self.my_comment_numbers = set()  # 自分のコメントの番号を保持
+
+    def add_my_comment(self, number, text):
+        """自分のコメントを登録"""
+        self.my_comment_numbers.add(number)
+        logger.info(f"自分のコメントを登録: 番号={number}, テキスト={text}")
+    
+    def reset_my_comments(self):
+        """スレッド切り替え時に自分のコメント番号をリセット"""
+        self.my_comment_numbers.clear()
+        logger.info("自分のコメント番号をリセットしました")
 
     def add_comment_batch(self, comments):
         """コメントバッチを追加し、流れを開始"""
@@ -440,7 +452,6 @@ class CommentOverlayWindow(QWidget):
             logger.debug(f"NG 本文でスキップ: {text}")
             return
         
-        # フィルタリング条件（変更なし）
         if self.hide_anchor_comments and ">>" in text:
             logger.debug(f"アンカーコメントをスキップ: {text}")
             return
@@ -479,11 +490,12 @@ class CommentOverlayWindow(QWidget):
             'width': text_width,
             'row': row,
             'creation_time': QApplication.instance().property("comment_time") or 0,
-            'speed': speed
+            'speed': speed,
+            'number': comment.get('number', 0)  # 番号がなければ0を設定
         }
         self.comments.append(comment_obj)
-        self.row_usage[row] = comment_obj  # 完全なオブジェクトで更新
-        logger.info(f"コメント追加: {text}, ID: {comment_id}, y: {y_position}, speed: {speed}")
+        self.row_usage[row] = comment_obj
+        logger.info(f"コメント追加: 番号={comment_obj['number']}, テキスト={text}, ID={comment_id}, y={y_position}, speed={speed}")
         self.update()
 
     def update_comments(self):
@@ -584,21 +596,54 @@ class CommentOverlayWindow(QWidget):
         font.setWeight(self.font_weight)
         painter.setFont(font)
 
+        logger.debug(f"現在の自分のコメント番号: {self.my_comment_numbers}")
         for comment in self.comments:
             if comment['x'] + comment['width'] < 0 or comment['x'] > self.width():
                 continue
 
-            # システムメッセージの場合に背景を描画
-            if comment.get('is_system', False):
-                painter.setBrush(QBrush(QColor(255, 255, 0, 70)))  # 薄い黄色
-                painter.setPen(Qt.NoPen)
-                painter.drawRect(int(comment['x']) - 5, int(comment['y']) - font_metrics.ascent() - 5,
-                            comment['width'] + 10, font_metrics.height() + 10)
+            # システムメッセージか通常コメントかを判定
+            is_system = comment.get('is_system', False)
+            is_my_comment = False
+            is_anchored_to_my_comment = False
 
+            if not is_system and 'number' in comment:  # システムメッセージでない場合のみnumberをチェック
+                is_my_comment = comment['number'] in self.my_comment_numbers
+                if not is_my_comment:
+                    anchor_matches = re.findall(r'>>([0-9]+)', comment['text'])
+                    for anchor in anchor_matches:
+                        if int(anchor) in self.my_comment_numbers:
+                            is_anchored_to_my_comment = True
+                            break
+
+            # 背景と枠線の設定
+            if is_system:
+                # システムメッセージ: 以前の背景色を復元
+                painter.setBrush(QBrush(QColor(255, 255, 0, 70)))  # 薄い黄色の背景
+                painter.setPen(Qt.NoPen)  # 枠線なし
+                logger.debug(f"システムメッセージ描画: {comment['text']}")
+            elif is_my_comment:
+                # 自分のコメント: 黄色い枠線のみ
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor(255, 255, 0, 255), 3))
+                logger.debug(f"自分のコメント描画: 番号={comment['number']}, テキスト={comment['text']}")
+            elif is_anchored_to_my_comment:
+                # アンカー付きコメント: 赤い枠線のみ
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor(255, 0, 0, 255), 3))
+                logger.debug(f"アンカー付きコメント描画: 番号={comment['number']}, テキスト={comment['text']}, アンカー={anchor_matches}")
+            else:
+                # 通常コメント: 背景も枠線もなし
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(Qt.NoPen)
+
+            if painter.brush() != Qt.NoBrush or painter.pen() != Qt.NoPen:
+                painter.drawRect(int(comment['x']) - 5, int(comment['y']) - font_metrics.ascent() - 5,
+                                comment['width'] + 10, font_metrics.height() + 10)
+
+            # 影の描画（必要に応じて）
             if self.font_shadow > 0:
                 painter.setPen(self.font_shadow_color)
                 offset = self.font_shadow
-                # 複数の方向に対応
                 for direction in self.font_shadow_directions:
                     if direction == "bottom-right":
                         painter.drawText(int(comment['x']) + offset, int(comment['y']) + offset, comment['text'])
@@ -609,6 +654,7 @@ class CommentOverlayWindow(QWidget):
                     elif direction == "top-left":
                         painter.drawText(int(comment['x']) - offset, int(comment['y']) - offset, comment['text'])
 
+            # テキスト描画
             painter.setPen(self.font_color)
             painter.drawText(int(comment['x']), int(comment['y']), comment['text'])
 

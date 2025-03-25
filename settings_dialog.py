@@ -21,16 +21,16 @@ class SettingsDialog(QDialog):
         self.resize(500, hint.height())  # 幅は500、高さは推奨値に
         
         self.settings = parent.settings if parent is not None else {
-            "font_size": 24,
+            "font_size": 31,
             "font_weight": 75,
             "font_shadow": 2,
             "font_color": "#FFFFFF",
-            "font_family": "MSP Gothic",
+            "font_family": "MS PGothic",
             "font_shadow_direction": "bottom-right",
             "font_shadow_color": "#000000",
             "comment_speed": 6,
             "display_position": "center",
-            "max_comments": 40,
+            "max_comments": 80,
             "window_opacity": 0.8,
             "update_interval": 5,
             "playback_speed": 1.0,
@@ -38,7 +38,7 @@ class SettingsDialog(QDialog):
             "next_thread_search_duration": 180,
             "hide_anchor_comments": False,
             "hide_url_comments": False,
-            "spacing": 10,
+            "spacing": 30,
             "ng_ids": [],  # NGリスト追加
             "ng_names": [],
             "ng_texts": []
@@ -51,7 +51,7 @@ class SettingsDialog(QDialog):
         print("現在の self.settings:", self.settings)
 
         layout = QVBoxLayout()
-        self.tab_widget = QTabWidget()  # self を付けてインスタンス変数に
+        self.tab_widget = QTabWidget()
         
         # 表示設定タブ
         display_tab = QWidget()
@@ -64,14 +64,22 @@ class SettingsDialog(QDialog):
         # フォント種類（動的取得）
         self.font_family_combo = QComboBox()
         font_db = QFontDatabase()
-        font_families = font_db.families()  # システムの全フォントを取得
+        font_families = font_db.families()
         for family in font_families:
             self.font_family_combo.addItem(family, family)
-        index = self.font_family_combo.findData(self.settings["font_family"])
+        
+        # "MS PGothic" を確実に選択
+        target_font = self.settings["font_family"]  # "MS PGothic"
+        index = self.font_family_combo.findData(target_font)
         if index >= 0:
             self.font_family_combo.setCurrentIndex(index)
+            print(f"フォント '{target_font}' が見つかりました。インデックス: {index}")
         else:
-            self.font_family_combo.setCurrentIndex(0)  # 見つからない場合は先頭を選択
+            # フォントが見つからない場合、リストに追加して選択
+            self.font_family_combo.addItem(target_font, target_font)
+            self.font_family_combo.setCurrentIndex(self.font_family_combo.count() - 1)
+            print(f"フォント '{target_font}' が見つからなかったため追加し、選択しました")
+        
         font_layout.addRow("フォント:", self.font_family_combo)
         
         # フォントサイズ
@@ -517,18 +525,18 @@ class SettingsDialog(QDialog):
         if QMessageBox.question(self, "設定リセット", "設定を初期値に戻しますか？",
                               QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             self.settings = {
-                "font_size": 24,
+                "font_size": 31,
                 "font_weight": 75,
                 "font_shadow": 2,
                 "font_color": "#FFFFFF",
-                "font_family": "MSP Gothic",
+                "font_family": "MS PGothic",
                 "font_shadow_direction": "bottom-right",
                 "font_shadow_directions": ["bottom-right"],  # リスト形式でデフォルトは "bottom-right" のみ
                 "font_shadow_color": "#000000",
                 "comment_speed": 6,
                 "comment_delay": 0,
                 "display_position": "center",
-                "max_comments": 40,
+                "max_comments": 80,
                 "window_opacity": 0.8,
                 "update_interval": 5,
                 "playback_speed": 1.0,
@@ -536,7 +544,7 @@ class SettingsDialog(QDialog):
                 "next_thread_search_duration": 180,
                 "hide_anchor_comments": False,
                 "hide_url_comments": False,
-                "spacing": 10,
+                "spacing": 30,
                 "ng_ids": [],
                 "ng_names": [],
                 "ng_texts": []
