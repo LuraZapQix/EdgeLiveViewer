@@ -200,6 +200,17 @@ class SettingsDialog(QDialog):
         self.hide_url_checkbox = QCheckBox("URL（http）を含むコメントを表示しない")
         self.hide_url_checkbox.setChecked(self.settings.get("hide_url_comments", False))
         display_form.addRow("", self.hide_url_checkbox)
+
+        # 分離ウィンドウ透明度のスライダー追加
+        self.write_window_opacity_slider = QSlider(Qt.Horizontal)
+        self.write_window_opacity_slider.setRange(10, 100)  # 10%～100%
+        self.write_window_opacity_slider.setValue(int(self.settings.get("write_window_opacity", 1.0) * 100))
+        self.write_window_opacity_slider.setTickPosition(QSlider.TicksBelow)
+        self.write_window_opacity_slider.setTickInterval(10)
+        self.write_window_opacity_label = QLabel(f"{int(self.settings.get('write_window_opacity', 1.0) * 100)}%")
+        self.write_window_opacity_slider.valueChanged.connect(self.update_write_window_opacity_label)
+        display_form.addRow("分離ウィンドウ透明度:", self.write_window_opacity_slider)
+        display_form.addRow("", self.write_window_opacity_label)
         
         display_group.setLayout(display_form)
         display_layout.addWidget(display_group)
@@ -268,9 +279,7 @@ class SettingsDialog(QDialog):
         network_tab.setLayout(network_layout)
         self.tab_widget.addTab(network_tab, "通信・再生設定")
 
-
-
-# NG設定タブ（新規）
+        # NG設定タブ（新規）
         ng_tab = QWidget()
         ng_layout = QVBoxLayout()
         
@@ -443,6 +452,9 @@ class SettingsDialog(QDialog):
         self.font_color_button.setStyleSheet(f"background-color: {color_name}; color: {'#000000' if QColor(color_name).lightness() > 128 else '#FFFFFF'};")
         self.font_color_button.setText(color_name)
     
+    def update_write_window_opacity_label(self, value):
+        self.write_window_opacity_label.setText(f"{value}%")
+
     def get_settings(self):
         return self.settings
     
@@ -466,6 +478,7 @@ class SettingsDialog(QDialog):
         self.settings["hide_anchor_comments"] = self.hide_anchor_checkbox.isChecked()
         self.settings["hide_url_comments"] = self.hide_url_checkbox.isChecked()
         self.settings["spacing"] = self.spacing_spin.value()
+        self.settings["write_window_opacity"] = self.write_window_opacity_slider.value() / 100.0
 
         # 影の方向をリストとして保存
         shadow_directions = []

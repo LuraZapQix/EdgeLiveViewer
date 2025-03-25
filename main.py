@@ -37,12 +37,18 @@ class WriteWidget(QWidget):
         self.setMinimumWidth(400)
         self._dragging = False
         self._offset = QPoint()
-        self._force_close = False
+        # MainWindowへの参照を保持
+        self.main_window = parent if isinstance(parent, MainWindow) else None
         self.setup_ui()
         
-        main_window = parent if isinstance(parent, MainWindow) else None
-        self.hide_on_detach = main_window.settings.get("hide_name_mail_on_detach", False) if main_window else False
+        self.hide_on_detach = self.main_window.settings.get("hide_name_mail_on_detach", False) if self.main_window else False
         self.hide_checkbox.setChecked(self.hide_on_detach)
+
+        # 透過度の初期設定
+        if self.main_window:
+            opacity = self.main_window.settings.get("write_window_opacity", 1.0)
+            self.setWindowOpacity(opacity)
+            logger.info(f"WriteWidget 初期化時に透過度を設定: {opacity*100}%")
     
     def setup_ui(self):
         write_layout = QVBoxLayout()
@@ -133,17 +139,22 @@ class WriteWidget(QWidget):
             self.hide_checkbox.setVisible(not self.hide_on_detach)  # 分離時: チェック済みなら非表示
         logger.info(f"名前とメール欄の表示状態を変更: {visible}, チェックボックス: {self.hide_checkbox.isVisible()}")
 
-    def force_close(self):
-        self._force_close = True
-        self.close()
-
     def closeEvent(self, event):
-        if not self.parent() and not self.isHidden() and not self._force_close:
-            event.ignore()
-            logger.info("書き込みウィンドウの閉じる操作を無効化しました。ドッキングで戻してください。")
+        if not self.parent():  # 分離状態の場合
+            if self.main_window and isinstance(self.main_window, MainWindow):
+                # ドッキング処理を直接呼び出し
+                self.main_window.toggle_write_widget()
+                # ウィンドウが閉じないようにイベントを無視（ドッキング後に親ウィンドウが管理）
+                event.ignore()
+                logger.info("分離状態の書き込みウィンドウをドッキング状態に戻しました")
+            else:
+                # メインウィンドウが見つからない場合（異常系）は閉じる
+                event.accept()
+                logger.warning("メインウィンドウが見つからなかったため、書き込みウィンドウを閉じました")
         else:
+            # ドッキング状態では通常通り閉じる
             event.accept()
-            logger.info("書き込みウィンドウを閉じました")
+            logger.info("ドッキング状態の書き込みウィンドウを閉じました")
 
     def adjust_height(self):
         """チェック状態に応じたウィンドウの高さを計算して設定"""
@@ -273,6 +284,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("エッヂ実況ビュアー")
         self.setMinimumSize(800, 600)
         
+        QApplication.instance().setProperty("main_window", self)
         self.settings = self.load_settings()
         self.overlay_window = None
         self.thread_fetcher = None
@@ -285,7 +297,6 @@ class MainWindow(QMainWindow):
         self.load_auth_token()
         self.write_widget = None
         self.is_docked = True
-        
         self.init_ui()
         
         app = QApplication.instance()
@@ -298,6 +309,8 @@ class MainWindow(QMainWindow):
         self.health_timer.timeout.connect(self.check_fetcher_health)
         self.health_timer.start(30000)
         self.last_post_time = 0
+
+        
 
     def init_ui(self):
         central_widget = QWidget()
@@ -390,8 +403,7 @@ class MainWindow(QMainWindow):
         
         if self.is_docked:
             # 分離
-            # ドッキング時のグローバル座標を取得
-            docked_pos = self.write_widget.mapToGlobal(QPoint(0, 0))  # WriteWidget の左上角のグローバル座標
+            docked_pos = self.write_widget.mapToGlobal(QPoint(0, 0))
             self.write_widget.setParent(None)
             self.write_widget.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
             self.write_widget.hide()
@@ -400,24 +412,43 @@ class MainWindow(QMainWindow):
             else:
                 self.write_widget.set_name_mail_visible(True)
             self.write_widget.adjust_height()
-            # ドッキング時の位置を基準に、少し上に移動（例: y - 20px）
+            # 透過度の適用
+            opacity = self.settings.get("write_window_opacity", 1.0)
+            self.write_widget.setWindowOpacity(opacity)  # 再起動後も確実に適用
+            logger.info(f"分離時に透過度を設定: {opacity*100}%")
             new_x = docked_pos.x() - 40
-            new_y = docked_pos.y() - 30  # 20px 上に移動（調整可能）
+            new_y = docked_pos.y() - 30
             self.write_widget.move(new_x, new_y)
             self.write_widget.show()
             self.write_widget.toggle_button.setText("ドッキング")
             self.is_docked = False
             logger.info(f"書き込み欄を分離しました（位置: x={new_x}, y={new_y}）")
         else:
-            # ドッキング（変更なし）
-            self.detail_layout.addWidget(self.write_widget)
+            # ドッキング
+            self.write_widget.setParent(self)
             self.write_widget.setWindowFlags(Qt.Widget)
+            self.detail_layout.addWidget(self.write_widget)
             self.write_widget.set_name_mail_visible(True)
             self.write_widget.adjust_height()
             self.write_widget.show()
             self.write_widget.toggle_button.setText("分離")
             self.is_docked = True
             logger.info("書き込み欄をドッキングしました")
+
+    def closeEvent(self, event):
+        if self.thread_fetcher is not None:
+            self.thread_fetcher.stop()
+        
+        if self.comment_fetcher is not None:
+            self.comment_fetcher.stop()
+        
+        if self.next_thread_finder is not None:
+            self.next_thread_finder.stop()
+        
+        if self.overlay_window is not None and self.overlay_window.isVisible():
+            self.overlay_window.close()
+        
+        event.accept()
     
     def check_fetcher_health(self):
         if self.comment_fetcher and not self.comment_fetcher.isRunning():
@@ -940,6 +971,13 @@ class MainWindow(QMainWindow):
             
             if self.comment_fetcher is not None:
                 self.comment_fetcher.update_interval = self.settings["update_interval"]
+            
+            # 分離状態の書き込みウィジェットに透明度を反映
+            if self.write_widget is not None and not self.is_docked:
+                opacity = self.settings.get("write_window_opacity", 1.0)
+                self.write_widget.setWindowOpacity(opacity)
+                logger.info(f"分離ウィンドウの透明度を更新: {opacity*100}%")
+            
             logger.info("設定を更新しました")
             print("現在の self.settings:", self.settings)
     
@@ -974,6 +1012,7 @@ class MainWindow(QMainWindow):
             "ng_texts": [],
             "auth_token": None,
             "tinker_token": None,
+            "write_window_opacity": 1.0,  # デフォルトは100%（不透明）
             "hide_name_mail_on_detach": False  # 新しい設定項目
         }
         
@@ -1022,28 +1061,6 @@ class MainWindow(QMainWindow):
     def show_error(self, message):
         logger.error(message)
         self.statusBar().showMessage(f"エラー: {message[:50]}...")
-    
-    def closeEvent(self, event):
-        if self.thread_fetcher is not None:
-            self.thread_fetcher.stop()
-        
-        if self.comment_fetcher is not None:
-            self.comment_fetcher.stop()
-        
-        if self.next_thread_finder is not None:
-            self.next_thread_finder.stop()
-        
-        if self.overlay_window is not None and self.overlay_window.isVisible():
-            self.overlay_window.close()
-        
-        # 分離状態の書き込みウィンドウを閉じる
-        if self.write_widget is not None:
-            if not self.is_docked:  # 分離状態の場合
-                self.write_widget.force_close()  # 強制終了メソッドを呼び出し
-                logger.info("分離状態の書き込みウィンドウを閉じました")
-            # ドッキング状態の場合は親（MainWindow）の終了で自動的に閉じる
-        
-        event.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
