@@ -322,6 +322,7 @@ class MainWindow(QMainWindow):
         input_layout = QHBoxLayout()
         self.thread_input = QLineEdit()
         self.thread_input.setPlaceholderText("スレッドURLまたはID（例: https://bbs.eddibb.cc/test/read.cgi/liveedge/1742132339/ または 1742132339）")
+        self.thread_input.returnPressed.connect(self.connect_to_thread)
         connect_button = QPushButton("接続")
         connect_button.clicked.connect(self.connect_to_thread)
         input_layout.addWidget(QLabel("スレッドURL/ID:"))
@@ -331,7 +332,7 @@ class MainWindow(QMainWindow):
         
         self.tab_widget = QTabWidget()
         
-        # スレッド一覧タブ（変更なし）
+        # スレッド一覧タブ
         thread_tab = QWidget()
         thread_layout = QVBoxLayout(thread_tab)
         sort_layout = QHBoxLayout()
@@ -346,12 +347,19 @@ class MainWindow(QMainWindow):
         sort_layout.addStretch()
         sort_layout.addWidget(refresh_button)
         thread_layout.addLayout(sort_layout)
+        
         self.thread_table = QTableWidget(0, 4)
         self.thread_table.setHorizontalHeaderLabels(["スレッドタイトル", "レス数", "勢い", "作成日時"])
-        self.thread_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.thread_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)  # スレッドタイトルは伸縮可能
         self.thread_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.thread_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.thread_table.doubleClicked.connect(self.thread_selected)
+        
+        # 列幅を設定
+        self.thread_table.setColumnWidth(1, 60)   # レス数: 60px
+        self.thread_table.setColumnWidth(2, 60)   # 勢い: 60px
+        self.thread_table.setColumnWidth(3, 150)  # 作成日時: 150px
+        
         thread_layout.addWidget(self.thread_table)
         self.tab_widget.addTab(thread_tab, "スレッド一覧")
         
@@ -363,15 +371,17 @@ class MainWindow(QMainWindow):
         self.thread_title_label.setAlignment(Qt.AlignCenter)
         self.detail_layout.addWidget(self.thread_title_label)
         
-        self.detail_table = QTableWidget(0, 4)
-        self.detail_table.setHorizontalHeaderLabels(["番号", "本文", "名前", "ID"])
-        self.detail_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        # 列数を5に変更し、「投稿日時」を追加
+        self.detail_table = QTableWidget(0, 5)
+        self.detail_table.setHorizontalHeaderLabels(["番号", "本文", "名前", "ID", "投稿日時"])
+        self.detail_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # 本文を伸縮
         self.detail_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.detail_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.detail_table.verticalHeader().setVisible(False)
-        self.detail_table.setColumnWidth(0, 40)
-        self.detail_table.setColumnWidth(2, 120)
-        self.detail_table.setColumnWidth(3, 100)
+        self.detail_table.setColumnWidth(0, 40)   # 番号
+        self.detail_table.setColumnWidth(2, 80)  # 名前
+        self.detail_table.setColumnWidth(3, 80)  # ID
+        self.detail_table.setColumnWidth(4, 100)  # 投稿日時（幅を適宜設定）
         self.detail_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.detail_table.customContextMenuRequested.connect(self.show_context_menu)
         self.detail_layout.addWidget(self.detail_table)
@@ -400,8 +410,6 @@ class MainWindow(QMainWindow):
     def start_playback_from_comment(self):
         """スレッド詳細画面のレスをダブルクリックして再生開始"""
         if not self.is_past_thread:
-            logger.info("リアルタイムスレッドでは再生位置の変更は無効です")
-            QMessageBox.information(self, "情報", "この機能は過去ログ再生時のみ使用可能です。")
             return
 
         selected_row = self.detail_table.currentRow()
@@ -514,6 +522,11 @@ class MainWindow(QMainWindow):
         if self.overlay_window is not None and self.overlay_window.isVisible():
             self.overlay_window.close()
         
+        # 分離状態の WriteWidget を閉じる
+        if not self.is_docked and self.write_widget is not None:
+            self.write_widget.close()
+            logger.info("分離状態の書き込みウィジェットを閉じました")
+        
         event.accept()
     
     def check_fetcher_health(self):
@@ -606,26 +619,38 @@ class MainWindow(QMainWindow):
     def send_post_request(self, thread_id, name, mail, comment):
         """エッヂに書き込みリクエストを送信"""
         url = "https://bbs.eddibb.cc/test/bbs.cgi"
-        # 汎用的なUser-Agent（必要最低限）
         headers = {
-            "User-Agent": "EdgeLiveViewer/1.0",  # カスタムアプリ名に変更
+            "User-Agent": "EdgeLiveViewer/1.0",
             "Referer": f"https://bbs.eddibb.cc/liveedge/{thread_id}",
             "Accept": "*/*",
-            "Accept-Encoding": "identity",  # zstd回避
+            "Accept-Encoding": "identity",
             "Content-Type": "application/x-www-form-urlencoded; charset=Shift_JIS",
             "Origin": "https://bbs.eddibb.cc",
         }
+
+        def to_safe_shift_jis(text):
+            """Shift_JISでエンコードできない文字をHTMLエンティティに変換"""
+            result = ""
+            for char in text:
+                try:
+                    char.encode("shift_jis")  # Shift_JISでエンコード可能かチェック
+                    result += char
+                except UnicodeEncodeError:
+                    # エンコードできない場合、HTMLエンティティに変換
+                    result += f"&#{ord(char)};"
+            return result.encode("shift_jis")
+
         data = {
             "bbs": "liveedge",
             "key": thread_id,
-            "FROM": name.encode("shift_jis"),
-            "mail": mail.encode("shift_jis") if mail else b"",
-            "MESSAGE": comment.encode("shift_jis"),
+            "FROM": to_safe_shift_jis(name),
+            "mail": to_safe_shift_jis(mail) if mail else b"",
+            "MESSAGE": to_safe_shift_jis(comment),
             "submit": "書き込む".encode("shift_jis"),
         }
         if self.auth_token:
-            data["mail"] = f"#{self.auth_token}".encode("shift_jis")
-        
+            data["mail"] = to_safe_shift_jis(f"#{self.auth_token}")
+
         session = requests.Session()
         try:
             if self.auth_token:
@@ -637,38 +662,11 @@ class MainWindow(QMainWindow):
             session.get(f"https://bbs.eddibb.cc/liveedge/{thread_id}", headers=headers, timeout=5)
             
             logger.info(f"送信データ: {data}")
-            logger.info(f"送信クッキー: {session.cookies.get_dict()}")
             response = session.post(url, headers=headers, data=data, timeout=10)
-            
-            logger.info(f"レスポンスステータス: {response.status_code}")
-            logger.info(f"レスポンスヘッダー: {dict(response.headers)}")
-            
-            response_text = response.content.decode("shift_jis", errors="replace")
-            logger.info(f"レスポンス本文: {response_text[:500]}")
-            
-            if response.status_code == 200 and "<title>書きこみました</title>" in response_text:
-                new_tinker = session.cookies.get("tinker-token")
-                if new_tinker:
-                    self.settings["tinker_token"] = new_tinker
-                    self.save_settings()
-                    logger.info(f"tinker-tokenを更新: {new_tinker}")
-                new_edge = session.cookies.get("edge-token")
-                if new_edge and new_edge != self.auth_token:
-                    self.auth_token = new_edge
-                    self.save_auth_token(new_edge)
-                    logger.info(f"edge-tokenを更新: {new_edge}")
-                return True, response_text
-            
-            auth_code_match = re.search(r'<input[^>]*name="auth-code"[^>]*value="([^"]+)"[^>]*>|認証コード[\'"](\d{6})[\'"]', response_text)
-            if auth_code_match:
-                auth_code = auth_code_match.group(1) or auth_code_match.group(2)
-                new_edge = session.cookies.get("edge-token")
-                if new_edge and new_edge != self.auth_token:
-                    logger.info(f"認証コードレスポンスにedge-tokenが含まれていますが無視: {new_edge}")
-                return False, auth_code
-            return False, response_text
+            response.raise_for_status()
+            return True, response.text
         except requests.RequestException as e:
-            logger.error(f"書き込みリクエストに失敗: {str(e)}")
+            logger.error(f"書き込みエラー: {e}")
             return False, str(e)
 
     def post_comment(self):
@@ -751,6 +749,7 @@ class MainWindow(QMainWindow):
             self.detail_table.setItem(current_row_count, 1, QTableWidgetItem(comment["text"]))
             self.detail_table.setItem(current_row_count, 2, QTableWidgetItem(formatted_name))
             self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
+            self.detail_table.setItem(current_row_count, 4, QTableWidgetItem(comment.get("date", "不明")))
             current_row_count += 1
         
         # スクロールバーの状態をチェック
@@ -1012,6 +1011,10 @@ class MainWindow(QMainWindow):
         
         self.start_thread_fetcher(thread_id, thread_title, is_past_thread=self.is_past_thread)
         self.statusBar().showMessage(f"スレッド {thread_id} - {thread_title} に接続しました")
+
+        # スレッド詳細タブに切り替え
+        self.tab_widget.setCurrentIndex(1)
+        logger.info(f"スレッド {thread_id} に接続し、スレッド詳細タブに切り替えました")
     
     def check_thread_exists(self, thread_id):
         try:
