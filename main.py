@@ -92,16 +92,20 @@ class WriteWidget(QWidget):
         self.setLayout(write_layout)
     
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.LeftButton and self.parent() is None:
             self._dragging = True
             self._offset = event.pos()
             event.accept()
-    
+        else:
+            event.ignore()
+
     def mouseMoveEvent(self, event):
-        if self._dragging:
+        if self._dragging and self.parent() is None:
             self.move(self.mapToGlobal(event.pos() - self._offset))
             event.accept()
-    
+        else:
+            event.ignore()
+
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._dragging = False
@@ -386,6 +390,8 @@ class MainWindow(QMainWindow):
         
         if self.is_docked:
             # 分離
+            # ドッキング時のグローバル座標を取得
+            docked_pos = self.write_widget.mapToGlobal(QPoint(0, 0))  # WriteWidget の左上角のグローバル座標
             self.write_widget.setParent(None)
             self.write_widget.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
             self.write_widget.hide()
@@ -393,18 +399,21 @@ class MainWindow(QMainWindow):
                 self.write_widget.set_name_mail_visible(False)
             else:
                 self.write_widget.set_name_mail_visible(True)
-            self.write_widget.adjust_height()  # 高さを調整
+            self.write_widget.adjust_height()
+            # ドッキング時の位置を基準に、少し上に移動（例: y - 20px）
+            new_x = docked_pos.x() - 40
+            new_y = docked_pos.y() - 30  # 20px 上に移動（調整可能）
+            self.write_widget.move(new_x, new_y)
             self.write_widget.show()
-            self.write_widget.move(self.pos().x() + 50, self.pos().y() + 50)
             self.write_widget.toggle_button.setText("ドッキング")
             self.is_docked = False
-            logger.info("書き込み欄を分離しました（フレームレス＋最前面）")
+            logger.info(f"書き込み欄を分離しました（位置: x={new_x}, y={new_y}）")
         else:
-            # ドッキング
+            # ドッキング（変更なし）
             self.detail_layout.addWidget(self.write_widget)
             self.write_widget.setWindowFlags(Qt.Widget)
             self.write_widget.set_name_mail_visible(True)
-            self.write_widget.adjust_height()  # ドッキング時も高さを調整
+            self.write_widget.adjust_height()
             self.write_widget.show()
             self.write_widget.toggle_button.setText("分離")
             self.is_docked = True
