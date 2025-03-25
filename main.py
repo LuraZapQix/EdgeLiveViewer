@@ -729,38 +729,34 @@ class MainWindow(QMainWindow):
                     self.my_comments[key]["number"] = comment_number
                     if self.overlay_window:
                         self.overlay_window.add_my_comment(comment_number, comment_text)
-                        logger.info(f"自分のコメントを確定: 番号={comment_number}, テキスト={comment_text}, スレッド={self.current_thread_id}")
                     break
         
         self.overlay_window.add_comment_batch(comments)
         
-        current_row_count = self.detail_table.rowCount()
-        for comment in comments:
-            name = comment["name"]
-            if "</b>(" in name:
-                base_name, wacchoi = name.split("</b>(")
-                wacchoi = wacchoi.rstrip(")<b>")
-                formatted_name = f"{base_name}({wacchoi})"
-            else:
-                formatted_name = name
+        # リアルタイムモードの場合のみ、テーブルに逐次追加
+        if not self.is_past_thread:
+            current_row_count = self.detail_table.rowCount()
+            for comment in comments:
+                name = comment["name"]
+                if "</b>(" in name:
+                    base_name, wacchoi = name.split("</b>(")
+                    wacchoi = wacchoi.rstrip(")<b>")
+                    formatted_name = f"{base_name}({wacchoi})"
+                else:
+                    formatted_name = name
+                
+                self.detail_table.insertRow(current_row_count)
+                self.detail_table.setItem(current_row_count, 0, QTableWidgetItem(str(comment["number"])))
+                self.detail_table.setItem(current_row_count, 1, QTableWidgetItem(comment["text"]))
+                self.detail_table.setItem(current_row_count, 2, QTableWidgetItem(formatted_name))
+                self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
+                self.detail_table.setItem(current_row_count, 4, QTableWidgetItem(comment.get("date", "不明")))
+                current_row_count += 1
             
-            self.detail_table.insertRow(current_row_count)
-            self.detail_table.setItem(current_row_count, 0, QTableWidgetItem(str(comment["number"])))
-            self.detail_table.setItem(current_row_count, 1, QTableWidgetItem(comment["text"]))
-            self.detail_table.setItem(current_row_count, 2, QTableWidgetItem(formatted_name))
-            self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
-            self.detail_table.setItem(current_row_count, 4, QTableWidgetItem(comment.get("date", "不明")))
-            current_row_count += 1
-        
-        # スクロールバーの状態をチェック
-        scrollbar = self.detail_table.verticalScrollBar()
-        is_at_bottom = scrollbar.value() >= scrollbar.maximum()
-        
-        if is_at_bottom:
-            self.detail_table.scrollToBottom()
-            logger.debug("自動スクロール実行: ユーザーが一番下にいるため")
-        else:
-            logger.debug("自動スクロールスキップ: ユーザーが手動で上部を閲覧中")
+            scrollbar = self.detail_table.verticalScrollBar()
+            is_at_bottom = scrollbar.value() >= scrollbar.maximum()
+            if is_at_bottom:
+                self.detail_table.scrollToBottom()
 
     def handle_post_error(self, response_text, name, mail, comment):
         """書き込みエラーの処理"""
@@ -852,20 +848,55 @@ class MainWindow(QMainWindow):
             is_past_thread=is_past_thread,
             playback_speed=playback_speed,
             comment_delay=comment_delay,
-            start_number=start_number,  # 追加
+            start_number=start_number,
             parent=self
         )
         self.comment_fetcher.comments_fetched.connect(self.display_comments)
+        self.comment_fetcher.all_comments_fetched.connect(self.display_all_comments)
         self.comment_fetcher.thread_filled.connect(self.handle_thread_filled)
         self.comment_fetcher.error_occurred.connect(self.show_error)
         self.comment_fetcher.thread_over_1000.connect(self.on_thread_over_1000)
+        self.comment_fetcher.playback_finished.connect(self.on_playback_finished)  # 新しいシグナルを接続
         self.comment_fetcher.start()
         
         self.current_thread_id = thread_id
         self.current_thread_title = thread_title
         self.thread_title_label.setText(f"接続中のスレッド: {thread_title}")
-        self.detail_table.setRowCount(0)
-        logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title}, 過去ログ: {is_past_thread}, 再生速度: {playback_speed}x, 遅延: {comment_delay}秒, 開始番号: {start_number})")
+        self.detail_table.setRowCount(0)  # 初期化
+        logger.info(f"スレッド {thread_id} の監視を開始しました (タイトル: {thread_title}, 過去ログ: {is_past_thread})")
+
+    def on_playback_finished(self):
+        """再生終了時の処理"""
+        self.statusBar().showMessage(f"スレッド {self.current_thread_id} の再生が終了しました")
+        logger.info(f"スレッド {self.current_thread_id} の再生が終了しました")
+
+    def display_all_comments(self, comments):
+        """過去ログの全コメントをスレッド詳細画面に表示"""
+        if not self.is_past_thread:
+            return  # 過去ログ以外では何もしない
+        
+        self.detail_table.setRowCount(0)  # テーブルをクリア
+        current_row_count = 0
+        
+        for comment in comments:
+            name = comment["name"]
+            if "</b>(" in name:
+                base_name, wacchoi = name.split("</b>(")
+                wacchoi = wacchoi.rstrip(")<b>")
+                formatted_name = f"{base_name}({wacchoi})"
+            else:
+                formatted_name = name
+            
+            self.detail_table.insertRow(current_row_count)
+            self.detail_table.setItem(current_row_count, 0, QTableWidgetItem(str(comment["number"])))
+            self.detail_table.setItem(current_row_count, 1, QTableWidgetItem(comment["text"]))
+            self.detail_table.setItem(current_row_count, 2, QTableWidgetItem(formatted_name))
+            self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
+            self.detail_table.setItem(current_row_count, 4, QTableWidgetItem(comment.get("date", "不明")))
+            current_row_count += 1
+        
+        logger.info(f"過去ログの全コメントを表示しました: {len(comments)}件")
+        self.statusBar().showMessage(f"過去ログ {self.current_thread_id} の全コメント（{len(comments)}件）を表示しました")
 
     def update_thread_list(self, threads):
         self.thread_table.setRowCount(0)

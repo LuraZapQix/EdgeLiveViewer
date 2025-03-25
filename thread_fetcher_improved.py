@@ -129,9 +129,11 @@ import re
 
 class CommentFetcher(QThread):
     comments_fetched = pyqtSignal(list)
+    all_comments_fetched = pyqtSignal(list)  # 新しいシグナルを追加
     thread_filled = pyqtSignal(str, str)
     error_occurred = pyqtSignal(str)
     thread_over_1000 = pyqtSignal(str)
+    playback_finished = pyqtSignal()  # 新しいシグナルを追加
     
     def __init__(self, thread_id, thread_title="", update_interval=0.5, is_past_thread=False, playback_speed=1.0, comment_delay=0, start_number=None, parent=None):
         super().__init__(parent)
@@ -187,18 +189,8 @@ class CommentFetcher(QThread):
                 lines = response.text.split('\n')
                 new_comments = []
                 
-                if self.is_first_fetch:
-                    if self.is_past_thread:
-                        # start_numberが指定されている場合、その位置から開始
-                        start_index = max(0, (self.start_number - 1) if self.start_number else 0)
-                    elif len(lines) > 5:
-                        start_index = max(0, len(lines) - 5)
-                    else:
-                        start_index = 0
-                else:
-                    start_index = self.last_res_index + 1
-                
-                for i in range(start_index, len(lines)):
+                # 全コメントをパース
+                for i in range(len(lines)):
                     line = lines[i]
                     if not line.strip():
                         continue
@@ -220,24 +212,33 @@ class CommentFetcher(QThread):
                         text = re.sub(r'!metadent:.*?$', '', text, flags=re.MULTILINE)
                         text = html.unescape(text)
                         
-                        new_comments.append({
+                        comment = {
                             'number': i + 1,
                             'name': name,
                             'date': date,
                             'id': user_id,
                             'text': text,
                             'timestamp': self.parse_datetime(date)
-                        })
-                        self.last_res_index = i
+                        }
+                        new_comments.append(comment)
                 
-                if new_comments:
-                    if self.is_past_thread and self.is_first_fetch:
-                        base_time = new_comments[0]['timestamp']
+                # 過去ログの場合
+                if self.is_past_thread and self.is_first_fetch:
+                    # 全コメントを即座に送信（スレッド詳細画面用）
+                    self.all_comments_fetched.emit(new_comments)
+                    
+                    # 再生開始位置を決定
+                    start_index = max(0, (self.start_number - 1) if self.start_number else 0)
+                    playback_comments = new_comments[start_index:]  # start_number以降のコメント
+                    
+                    # 時間差再生
+                    if playback_comments:
+                        base_time = playback_comments[0]['timestamp']
                         if not base_time:
-                            self.comments_fetched.emit(new_comments)
+                            self.comments_fetched.emit(playback_comments)
                         else:
                             prev_time = base_time
-                            for comment in new_comments:
+                            for comment in playback_comments:
                                 if not self.running:
                                     break
                                 time_diff = (comment['timestamp'] - prev_time).total_seconds()
@@ -246,16 +247,24 @@ class CommentFetcher(QThread):
                                 if self.running:
                                     self.comments_fetched.emit([comment])
                                     prev_time = comment['timestamp']
-                    else:
-                        if self.comment_delay > 0:
-                            logger.info(f"コメント送信を {self.comment_delay}秒 遅延させます")
-                            self.safe_sleep(self.comment_delay)
-                        logger.info(f"取得した新コメント数: {len(new_comments)}")
-                        self.comments_fetched.emit(new_comments)
                     
-                    retry_count = 0
-                    if self.is_first_fetch:
-                        self.is_first_fetch = False
+                    # 再生終了後にシグナルを発行してループを終了
+                    self.playback_finished.emit()
+                    break  # 過去ログ再生後はループを抜ける
+                
+                else:
+                    # リアルタイムモードまたは2回目以降
+                    start_index = self.last_res_index + 1 if not self.is_first_fetch else max(0, len(lines) - 5)
+                    batch_comments = [c for c in new_comments if c['number'] > start_index]
+                    if batch_comments:
+                        if self.comment_delay > 0:
+                            self.safe_sleep(self.comment_delay)
+                        self.comments_fetched.emit(batch_comments)
+                        self.last_res_index = batch_comments[-1]['number'] - 1
+                
+                retry_count = 0
+                if self.is_first_fetch:
+                    self.is_first_fetch = False
                 
                 if len(lines) >= 1000 and not self.is_past_thread:
                     self.thread_filled.emit(self.thread_id, self.thread_title)
