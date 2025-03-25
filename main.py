@@ -686,7 +686,6 @@ class MainWindow(QMainWindow):
         comment = self.write_widget.comment_input.text().strip()
         
         if not comment:
-            QMessageBox.warning(self, "エラー", "コメントを入力してください。")
             return
         
         current_time = time.time()
