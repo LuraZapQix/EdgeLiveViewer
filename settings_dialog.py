@@ -41,7 +41,8 @@ class SettingsDialog(QDialog):
             "spacing": 30,
             "ng_ids": [],  # NGリスト追加
             "ng_names": [],
-            "ng_texts": []
+            "ng_texts": [],
+            "display_images": True  # 新しい設定項目を追加（デフォルトは表示）
         }
         
         self.load_settings()
@@ -209,6 +210,11 @@ class SettingsDialog(QDialog):
         self.hide_url_checkbox.setChecked(self.settings.get("hide_url_comments", False))
         display_form.addRow("", self.hide_url_checkbox)
 
+        # 新しいチェックボックスを追加
+        self.display_images_checkbox = QCheckBox("画像を表示する")
+        self.display_images_checkbox.setChecked(self.settings.get("display_images", True))
+        display_form.addRow("", self.display_images_checkbox)
+
         # 分離ウィンドウ透明度のスライダー追加
         self.write_window_opacity_slider = QSlider(Qt.Horizontal)
         self.write_window_opacity_slider.setRange(10, 100)  # 10%～100%
@@ -219,7 +225,7 @@ class SettingsDialog(QDialog):
         self.write_window_opacity_slider.valueChanged.connect(self.update_write_window_opacity_label)
         display_form.addRow("分離ウィンドウ透明度:", self.write_window_opacity_slider)
         display_form.addRow("", self.write_window_opacity_label)
-        
+
         display_group.setLayout(display_form)
         display_layout.addWidget(display_group)
         
@@ -487,6 +493,7 @@ class SettingsDialog(QDialog):
         self.settings["hide_url_comments"] = self.hide_url_checkbox.isChecked()
         self.settings["spacing"] = self.spacing_spin.value()
         self.settings["write_window_opacity"] = self.write_window_opacity_slider.value() / 100.0
+        self.settings["display_images"] = self.display_images_checkbox.isChecked()  # 確実に保存
 
         # 影の方向をリストとして保存
         shadow_directions = []
@@ -547,7 +554,8 @@ class SettingsDialog(QDialog):
                 "spacing": 30,
                 "ng_ids": [],
                 "ng_names": [],
-                "ng_texts": []
+                "ng_texts": [],
+                "display_images": True  # リセット時もデフォルトは表示
             }
             self.font_size_slider.setValue(self.settings["font_size"])
             self.font_weight_slider.setValue(self.settings["font_weight"])  # 修正: スライダーにリセット
@@ -582,6 +590,7 @@ class SettingsDialog(QDialog):
             self.ng_id_list.clear()
             self.ng_name_list.clear()
             self.ng_text_list.clear()
+            self.display_images_checkbox.setChecked(self.settings["display_images"])  # 新しいチェックボックスをリセット
             
 
 if __name__ == "__main__":

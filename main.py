@@ -1219,8 +1219,8 @@ class MainWindow(QMainWindow):
             "ng_texts": [],
             "auth_token": None,
             "tinker_token": None,
-            "write_window_opacity": 1.0,  # デフォルトは100%（不透明）
-            "hide_name_mail_on_detach": False  # 新しい設定項目
+            "hide_name_mail_on_detach": False,
+            "display_images": True  # 新しい設定項目を追加
         }
         
         try:

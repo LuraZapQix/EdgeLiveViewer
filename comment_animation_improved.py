@@ -19,7 +19,7 @@ logger = logging.getLogger('CommentOverlayWindow')
 
 class ImageLoaderThread(QThread):
     """画像読み込み用のスレッド"""
-    image_loaded = pyqtSignal(str, QImage)  # URLと読み込んだ画像を送信
+    image_loaded = pyqtSignal(str, QImage, str)  # コメントIDを追加
 
     def __init__(self, url_queue):
         super().__init__()
@@ -32,9 +32,11 @@ class ImageLoaderThread(QThread):
     def run(self):
         while self.running:
             try:
-                url = self.url_queue.get(timeout=1)
+                # キューからURLとコメントIDを取得
+                url_data = self.url_queue.get(timeout=1)
+                url, comment_id = url_data if isinstance(url_data, tuple) else (url_data, None)
                 try:
-                    logger.info(f"画像の読み込みを開始: {url}")
+                    logger.info(f"画像の読み込みを開始: {url}, comment_id={comment_id}")
                     
                     # リトライ処理の設定
                     max_retries = 3
@@ -48,7 +50,7 @@ class ImageLoaderThread(QThread):
                                 image = QImage()
                                 if image.loadFromData(image_data.getvalue()):
                                     logger.info(f"画像の読み込み成功: {url}")
-                                    self.image_loaded.emit(url, image)
+                                    self.image_loaded.emit(url, image, comment_id)  # コメントIDを送信
                                     break  # 成功したらループを抜ける
                                 else:
                                     logger.error(f"画像データの読み込みに失敗: {url}")
@@ -75,7 +77,7 @@ class ImageLoaderThread(QThread):
                 except Exception as e:
                     logger.error(f"画像の読み込みに失敗: {str(e)}")
             except Empty:
-                continue
+                continue  # キューが空の場合は次のループへ
             except Exception as e:
                 logger.error(f"予期せぬエラー: {str(e)}")
                 continue
@@ -89,6 +91,28 @@ class CommentOverlayWindow(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowOpacity(0.8)
         self.setGeometry(100, 100, 600, 800)
+
+        # デフォルト設定を初期化
+        self.settings = {
+            "font_size": 31,
+            "font_weight": 75,
+            "font_shadow": 2,
+            "font_color": "#FFFFFF",
+            "font_family": "MS PGothic",
+            "font_shadow_directions": ["bottom-right"],
+            "font_shadow_color": "#000000",
+            "comment_speed": 6.0,
+            "display_position": "top",
+            "max_comments": 80,
+            "window_opacity": 0.8,
+            "spacing": 30,
+            "ng_ids": [],
+            "ng_names": [],
+            "ng_texts": [],
+            "hide_anchor_comments": False,
+            "hide_url_comments": False,
+            "display_images": True  # デフォルトで画像表示を有効
+        }
 
         self.comments = []
         self.max_comments = 80
@@ -587,7 +611,7 @@ class CommentOverlayWindow(QWidget):
             self.image_loader_thread.wait()
             self.image_loader_thread = None
 
-    def handle_loaded_image(self, url, image):
+    def handle_loaded_image(self, url, image, comment_id):
         """読み込んだ画像を処理"""
         logger.info(f"画像の読み込み完了を検知: URL={url}")
         if url in self.pending_images:
@@ -643,26 +667,21 @@ class CommentOverlayWindow(QWidget):
 
                             # 画像をキューに追加
                             image_id = f"img_{int(time.time()*1000)}_{len(self.images)}"
-                            self.image_queue.append((image_id, movie))
+                            self.image_queue.append((image_id, movie, comment_id))
                             logger.info(f"GIFアニメーションをキューに追加: ID={image_id}, URL={url}")
                         else:
                             logger.error(f"GIFデータの取得に失敗: HTTP {response.status_code}")
                     except Exception as e:
                         logger.error(f"GIFアニメーションの処理中にエラー: {str(e)}")
                 else:
-                    # 通常の画像として処理
                     scaled_width = int(self.image_height * (image.width() / image.height()))
                     scaled_image = image.scaled(scaled_width, self.image_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    
-                    # キャッシュに保存
                     self.image_cache[url] = scaled_image
                     if len(self.image_cache) > self.max_cache_size:
                         oldest_url = next(iter(self.image_cache))
                         del self.image_cache[oldest_url]
-
-                    # 画像をキューに追加
                     image_id = f"img_{int(time.time()*1000)}_{len(self.images)}"
-                    self.image_queue.append((image_id, scaled_image))
+                    self.image_queue.append((image_id, scaled_image, comment_id))
                     logger.info(f"画像をキューに追加: ID={image_id}, URL={url}")
             else:
                 logger.error(f"画像の読み込みに失敗: URL={url}")
@@ -677,30 +696,54 @@ class CommentOverlayWindow(QWidget):
         window_width = self.width()
         logger.debug(f"画像キュー処理開始: キューサイズ={len(self.image_queue)}, ウィンドウ幅={window_width}")
 
-        # キュー内の画像を処理
+        processed_ids = set()
         for image_data in self.image_queue[:]:
-            image_id, image = image_data
-            if image and image_id not in self.image_positions:
-                logger.debug(f"画像処理開始: ID={image_id}, タイプ={type(image)}")
-                # アスペクト比を保持しながらリサイズ
+            if len(image_data) != 3:
+                continue  # 古い形式のデータはスキップ
+            image_id, image, comment_id = image_data
+            if image_id in processed_ids or image_id in self.image_positions:
+                continue
+            processed_ids.add(image_id)
+
+            if image:
+                logger.debug(f"画像処理開始: ID={image_id}, comment_id={comment_id}, タイプ={type(image)}")
                 if isinstance(image, QMovie):
                     scaled_width = image.scaledSize().width()
                     self.movies[image_id] = image
-                    logger.debug(f"GIFアニメーションを登録: ID={image_id}, 幅={scaled_width}")
                 else:
                     scaled_width = int(self.image_height * (image.width() / image.height()))
                     self.images[image_id] = image
-                    logger.debug(f"通常画像を登録: ID={image_id}, 幅={scaled_width}")
-                
-                # 画像を表示可能な位置に配置（常に右端から開始）
+
+                # 同一コメント内の前の画像の現在の位置を確認
+                start_x = window_width
+                min_gap = 100  # 画像間の最小間隔
+
+                # self.image_positions から同一 comment_id の画像を取得
+                prev_images = [pos for img_id, pos in self.image_positions.items() if pos.get('comment_id') == comment_id]
+                if prev_images:
+                    # 最も右にある画像を選択
+                    prev_pos = max(prev_images, key=lambda p: p['x'] + p['width'])
+                    prev_x = prev_pos['x']
+                    prev_width = prev_pos['width']
+                    logger.debug(f"前の画像検出: prev_x={prev_x}, prev_width={prev_width}, comment_id={comment_id}")
+                    # 前の画像がまだ右端に近い場合、遅延を適用
+                    if prev_x + prev_width + min_gap > window_width:
+                        start_x = prev_x + prev_width + min_gap
+                        logger.debug(f"次の画像の開始位置を調整: start_x={start_x}")
+                        if start_x >= window_width:
+                            logger.debug(f"画面外のため保留: start_x={start_x}")
+                            continue  # 画面外なら次の周期まで保留
+
+                # 画像の位置を設定
                 self.image_positions[image_id] = {
-                    'x': window_width,  # 常に右端から開始
+                    'x': start_x,
                     'y': self.height() - self.image_height - 10,
                     'width': scaled_width,
                     'height': self.image_height,
-                    'speed': (window_width + scaled_width) / self.comment_speed
+                    'speed': (window_width + scaled_width) / self.comment_speed,
+                    'comment_id': comment_id
                 }
-                logger.info(f"画像を表示: ID={image_id}, x={window_width}")
+                logger.info(f"画像を表示: ID={image_id}, x={start_x}, comment_id={comment_id}")
                 self.image_queue.remove(image_data)
                 self.update()
 
@@ -709,33 +752,28 @@ class CommentOverlayWindow(QWidget):
             oldest_id = min(self.images.keys() if self.images else self.movies.keys())
             if oldest_id in self.images:
                 del self.images[oldest_id]
-                logger.debug(f"古い画像を削除: ID={oldest_id}")
             if oldest_id in self.movies:
                 self.movies[oldest_id].stop()
                 del self.movies[oldest_id]
-                logger.debug(f"古いGIFアニメーションを削除: ID={oldest_id}")
-            del self.image_positions[oldest_id]
+            if oldest_id in self.image_positions:
+                del self.image_positions[oldest_id]
             logger.info(f"古い画像を削除: ID={oldest_id}")
 
-    def load_image(self, url):
+    def load_image(self, url, comment_id=None):
         """URLから画像を読み込む（非同期）"""
-        # キャッシュをチェック
         if url in self.image_cache:
             logger.info(f"キャッシュから画像を読み込み: {url}")
             image = self.image_cache[url]
-            # キャッシュから読み込んだ画像をキューに追加（タイムスタンプを含むIDを生成）
             image_id = f"img_{int(time.time()*1000)}_{len(self.images)}"
-            self.image_queue.append((image_id, image))
+            self.image_queue.append((image_id, image, comment_id))  # comment_idを追加
             logger.info(f"キャッシュから画像をキューに追加: ID={image_id}")
             return image
 
-        # 読み込み中の場合はスキップ
         if url in self.pending_images:
             return None
 
-        # 読み込みキューに追加
         self.pending_images.add(url)
-        self.image_url_queue.put(url)
+        self.image_url_queue.put((url, comment_id))  # URLとcomment_idをタプルでキューに追加
         return None
 
     def update_comments(self):
@@ -786,14 +824,10 @@ class CommentOverlayWindow(QWidget):
         name = comment['name']
         user_id = comment['id']
         
-        # 画像URLをチェック
-        image_urls = self.extract_image_url(text)
-        if image_urls:
-            logger.info(f"コメントから画像URLを検出: {len(image_urls)}枚")
-            for image_url in image_urls:
-                self.load_image(image_url)  # 画像の読み込みを開始
-        
-        # NGフィルタリング（変更なし）
+        # デバッグ: 現在の display_images の値を確認
+        logger.debug(f"add_comment 開始 - display_images: {self.settings.get('display_images', True)}")
+
+        # NGフィルタリング
         if user_id in self.ng_ids:
             logger.debug(f"NG IDでスキップ: {user_id}, コメント: {text}")
             return
@@ -804,16 +838,33 @@ class CommentOverlayWindow(QWidget):
             logger.debug(f"NG 本文でスキップ: {text}")
             return
         
+        # アンカーコメントの非表示
         if self.hide_anchor_comments and ">>" in text:
             logger.debug(f"アンカーコメントをスキップ: {text}")
             return
-        if self.hide_url_comments and "http" in text:
+        
+        # URLコメントの非表示（画像URLの場合はスキップしない）
+        if self.hide_url_comments and "http" in text and not self.extract_image_url(text):
             logger.debug(f"URLコメントをスキップ: {text}")
             return
         
+        # 画像の表示設定を確認
+        if self.settings.get("display_images", True):
+            image_urls = self.extract_image_url(text)
+            if image_urls:
+                logger.info(f"コメントから画像URLを検出: {len(image_urls)}枚")
+                self.comment_id_counter += 1
+                comment_id = f"comment_{int(time.time()*1000)}_{self.comment_id_counter}"
+                for image_url in image_urls:
+                    self.load_image(image_url, comment_id)
+        else:
+            logger.debug(f"画像表示が無効化されています: {text}")
+        
+        # コメント数が上限を超えた場合、古いコメントを削除
         if len(self.comments) >= self.max_comments:
             self.remove_oldest_comment()
         
+        # フォント設定とメトリクスの計算
         font = QFont(self.font_family)
         font.setPointSize(self.font_size)
         font.setWeight(self.font_weight)
@@ -827,9 +878,12 @@ class CommentOverlayWindow(QWidget):
             y_position = self.move_area_height + row * self.row_height + line_height
         elif self.display_position == "bottom":
             y_position = self.height() - row * self.row_height - line_height
+        else:  # center の場合
+            y_position = (self.height() - line_height) // 2 + row * self.row_height
         
         y_position = max(line_height + self.move_area_height, min(y_position, self.height() - line_height))
         
+        # コメントオブジェクトの作成
         self.comment_id_counter += 1
         comment_id = f"comment_{int(time.time()*1000)}_{self.comment_id_counter}"
         total_distance = self.width() + text_width
@@ -843,11 +897,11 @@ class CommentOverlayWindow(QWidget):
             'row': row,
             'creation_time': QApplication.instance().property("comment_time") or 0,
             'speed': speed,
-            'number': comment.get('number', 0)  # 番号がなければ0を設定
+            'number': comment.get('number', 0)
         }
         self.comments.append(comment_obj)
         self.row_usage[row] = comment_obj
-        logger.info(f"コメント追加: 番号={comment_obj['number']}, テキスト={text}, ID={comment_id}, y={y_position}, speed={speed}")
+        logger.info(f"コメント追加: 番号={comment_obj['number']}, テキスト={text}, ID={comment_id}")
         self.update()
 
     def remove_oldest_comment(self):
@@ -1013,25 +1067,27 @@ class CommentOverlayWindow(QWidget):
             painter.drawText(int(comment['x']), int(comment['y']), comment['text'])
 
     def update_settings(self, settings):
-        self.font_size = settings.get("font_size", self.font_size)
-        self.font_weight = settings.get("font_weight", self.font_weight)
-        self.font_shadow = settings.get("font_shadow", self.font_shadow)
-        self.font_color = QColor(settings.get("font_color", self.font_color.name()))
-        self.font_family = settings.get("font_family", self.font_family)
-        self.font_shadow_directions = settings.get("font_shadow_directions", ["bottom-right"])
-        self.font_shadow_color = QColor(settings.get("font_shadow_color", self.font_shadow_color.name()))
-        self.comment_speed = settings.get("comment_speed", self.comment_speed)
-        self.display_position = settings.get("display_position", "top")
-        self.max_comments = settings.get("max_comments", self.max_comments)
-        self.hide_anchor_comments = settings.get("hide_anchor_comments", self.hide_anchor_comments)
-        self.hide_url_comments = settings.get("hide_url_comments", self.hide_url_comments)
-        self.spacing = settings.get("spacing", self.spacing)
-        self.ng_ids = settings.get("ng_ids", [])
-        self.ng_names = settings.get("ng_names", [])
-        self.ng_texts = settings.get("ng_texts", [])
-        self.current_update_interval = settings.get("update_interval", 1.0)
+        # 既存の設定を新しい設定で上書き
+        self.settings = settings.copy()  # 完全なコピーを作成
+        self.font_size = self.settings.get("font_size", self.font_size)
+        self.font_weight = self.settings.get("font_weight", self.font_weight)
+        self.font_shadow = self.settings.get("font_shadow", self.font_shadow)
+        self.font_color = QColor(self.settings.get("font_color", self.font_color.name()))
+        self.font_family = self.settings.get("font_family", self.font_family)
+        self.font_shadow_directions = self.settings.get("font_shadow_directions", ["bottom-right"])
+        self.font_shadow_color = QColor(self.settings.get("font_shadow_color", self.font_shadow_color.name()))
+        self.comment_speed = self.settings.get("comment_speed", self.comment_speed)
+        self.display_position = self.settings.get("display_position", "top")
+        self.max_comments = self.settings.get("max_comments", self.max_comments)
+        self.hide_anchor_comments = self.settings.get("hide_anchor_comments", self.hide_anchor_comments)
+        self.hide_url_comments = self.settings.get("hide_url_comments", self.hide_url_comments)
+        self.spacing = self.settings.get("spacing", self.spacing)
+        self.ng_ids = self.settings.get("ng_ids", [])
+        self.ng_names = self.settings.get("ng_names", [])
+        self.ng_texts = self.settings.get("ng_texts", [])
+        self.current_update_interval = self.settings.get("update_interval", 1.0)
 
-        opacity = settings.get("window_opacity", 0.8)
+        opacity = self.settings.get("window_opacity", 0.8)
         self.setWindowOpacity(opacity)
         
         self.calculate_comment_rows()
@@ -1044,6 +1100,8 @@ class CommentOverlayWindow(QWidget):
             total_distance = self.width() + pos['width']
             pos['speed'] = total_distance / self.comment_speed
         
+        # 設定更新後に値を確認
+        logger.debug(f"update_settings 実行後 - display_images: {self.settings.get('display_images', True)}")
         self.update()
 
 if __name__ == "__main__":
