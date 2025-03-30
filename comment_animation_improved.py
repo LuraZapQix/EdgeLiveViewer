@@ -111,7 +111,8 @@ class CommentOverlayWindow(QWidget):
             "ng_texts": [],
             "hide_anchor_comments": False,
             "hide_url_comments": False,
-            "display_images": True  # デフォルトで画像表示を有効
+            "display_images": True,
+            "hide_image_urls": True  # 新しい設定項目（デフォルトで非表示）
         }
 
         self.comments = []
@@ -824,8 +825,8 @@ class CommentOverlayWindow(QWidget):
         name = comment['name']
         user_id = comment['id']
         
-        # デバッグ: 現在の display_images の値を確認
-        logger.debug(f"add_comment 開始 - display_images: {self.settings.get('display_images', True)}")
+        # デバッグ: 現在の設定値を確認
+        logger.debug(f"add_comment 開始 - display_images: {self.settings.get('display_images', True)}, hide_image_urls: {self.settings.get('hide_image_urls', True)}")
 
         # NGフィルタリング
         if user_id in self.ng_ids:
@@ -843,23 +844,38 @@ class CommentOverlayWindow(QWidget):
             logger.debug(f"アンカーコメントをスキップ: {text}")
             return
         
-        # URLコメントの非表示（画像URLの場合はスキップしない）
-        if self.hide_url_comments and "http" in text and not self.extract_image_url(text):
-            logger.debug(f"URLコメントをスキップ: {text}")
+        # 画像URLを検出し、必要に応じて表示用テキストから削除
+        display_text = text
+        image_urls = self.extract_image_url(text)
+        if image_urls and self.settings.get("hide_image_urls", True):
+            logger.info(f"コメントから画像URLを検出: {len(image_urls)}枚")
+            for url in image_urls:
+                display_text = display_text.replace(url, "").strip()
+            if display_text:
+                display_text = f"[📷] {display_text}"  # 画像がある場合、先頭にアイコンを追加
+            else:
+                display_text = ""  # 空文字の場合はスキップ
+        
+        # URLコメントの非表示
+        if self.hide_url_comments and "http" in display_text :
+            logger.debug(f"URLコメントをスキップ: {display_text}")
             return
-        
+
         # 画像の表示設定を確認
-        if self.settings.get("display_images", True):
-            image_urls = self.extract_image_url(text)
-            if image_urls:
-                logger.info(f"コメントから画像URLを検出: {len(image_urls)}枚")
-                self.comment_id_counter += 1
-                comment_id = f"comment_{int(time.time()*1000)}_{self.comment_id_counter}"
-                for image_url in image_urls:
-                    self.load_image(image_url, comment_id)
+        if self.settings.get("display_images", True) and image_urls:
+            self.comment_id_counter += 1
+            comment_id = f"comment_{int(time.time()*1000)}_{self.comment_id_counter}"
+            for image_url in image_urls:
+                self.load_image(image_url, comment_id)
         else:
-            logger.debug(f"画像表示が無効化されています: {text}")
+            if image_urls:
+                logger.debug(f"画像表示が無効化されています: {text}")
         
+        # display_text が空文字の場合、コメントを追加しない
+        if not display_text:
+            logger.debug(f"表示テキストが空のためコメントをスキップ: 元テキスト={text}")
+            return
+
         # コメント数が上限を超えた場合、古いコメントを削除
         if len(self.comments) >= self.max_comments:
             self.remove_oldest_comment()
@@ -870,7 +886,7 @@ class CommentOverlayWindow(QWidget):
         font.setWeight(self.font_weight)
         font_metrics = QFontMetrics(font)
         
-        text_width = font_metrics.width(text)
+        text_width = font_metrics.width(display_text)
         row = self.find_available_row(text_width)
         
         line_height = font_metrics.height()
@@ -890,7 +906,7 @@ class CommentOverlayWindow(QWidget):
         speed = total_distance / self.comment_speed
         comment_obj = {
             'id': comment_id,
-            'text': text,
+            'text': display_text,
             'x': float(self.width()),
             'y': y_position,
             'width': text_width,
@@ -901,7 +917,43 @@ class CommentOverlayWindow(QWidget):
         }
         self.comments.append(comment_obj)
         self.row_usage[row] = comment_obj
-        logger.info(f"コメント追加: 番号={comment_obj['number']}, テキスト={text}, ID={comment_id}")
+        logger.info(f"コメント追加: 番号={comment_obj['number']}, テキスト={display_text}, 元テキスト={text}, ID={comment_id}")
+        self.update()
+
+    def update_settings(self, settings):
+        self.settings = settings.copy()
+        self.font_size = self.settings.get("font_size", self.font_size)
+        self.font_weight = self.settings.get("font_weight", self.font_weight)
+        self.font_shadow = self.settings.get("font_shadow", self.font_shadow)
+        self.font_color = QColor(self.settings.get("font_color", self.font_color.name()))
+        self.font_family = self.settings.get("font_family", self.font_family)
+        self.font_shadow_directions = self.settings.get("font_shadow_directions", ["bottom-right"])
+        self.font_shadow_color = QColor(self.settings.get("font_shadow_color", self.font_shadow_color.name()))
+        self.comment_speed = self.settings.get("comment_speed", self.comment_speed)
+        self.display_position = self.settings.get("display_position", "top")
+        self.max_comments = self.settings.get("max_comments", self.max_comments)
+        self.hide_anchor_comments = self.settings.get("hide_anchor_comments", self.hide_anchor_comments)
+        self.hide_url_comments = self.settings.get("hide_url_comments", self.hide_url_comments)
+        self.spacing = self.settings.get("spacing", self.spacing)
+        self.ng_ids = self.settings.get("ng_ids", [])
+        self.ng_names = self.settings.get("ng_names", [])
+        self.ng_texts = self.settings.get("ng_texts", [])
+        self.current_update_interval = self.settings.get("update_interval", 1.0)
+        # hide_image_urls は self.settings に含まれるため追加処理不要
+        
+        opacity = self.settings.get("window_opacity", 0.8)
+        self.setWindowOpacity(opacity)
+        
+        self.calculate_comment_rows()
+        for comment in self.comments:
+            total_distance = self.width() + comment['width']
+            comment['speed'] = total_distance / self.comment_speed
+        
+        for image_id, pos in self.image_positions.items():
+            total_distance = self.width() + pos['width']
+            pos['speed'] = total_distance / self.comment_speed
+        
+        logger.debug(f"update_settings 実行後 - display_images: {self.settings.get('display_images', True)}, hide_image_urls: {self.settings.get('hide_image_urls', True)}")
         self.update()
 
     def remove_oldest_comment(self):
@@ -1065,44 +1117,6 @@ class CommentOverlayWindow(QWidget):
             # テキスト描画
             painter.setPen(self.font_color)
             painter.drawText(int(comment['x']), int(comment['y']), comment['text'])
-
-    def update_settings(self, settings):
-        # 既存の設定を新しい設定で上書き
-        self.settings = settings.copy()  # 完全なコピーを作成
-        self.font_size = self.settings.get("font_size", self.font_size)
-        self.font_weight = self.settings.get("font_weight", self.font_weight)
-        self.font_shadow = self.settings.get("font_shadow", self.font_shadow)
-        self.font_color = QColor(self.settings.get("font_color", self.font_color.name()))
-        self.font_family = self.settings.get("font_family", self.font_family)
-        self.font_shadow_directions = self.settings.get("font_shadow_directions", ["bottom-right"])
-        self.font_shadow_color = QColor(self.settings.get("font_shadow_color", self.font_shadow_color.name()))
-        self.comment_speed = self.settings.get("comment_speed", self.comment_speed)
-        self.display_position = self.settings.get("display_position", "top")
-        self.max_comments = self.settings.get("max_comments", self.max_comments)
-        self.hide_anchor_comments = self.settings.get("hide_anchor_comments", self.hide_anchor_comments)
-        self.hide_url_comments = self.settings.get("hide_url_comments", self.hide_url_comments)
-        self.spacing = self.settings.get("spacing", self.spacing)
-        self.ng_ids = self.settings.get("ng_ids", [])
-        self.ng_names = self.settings.get("ng_names", [])
-        self.ng_texts = self.settings.get("ng_texts", [])
-        self.current_update_interval = self.settings.get("update_interval", 1.0)
-
-        opacity = self.settings.get("window_opacity", 0.8)
-        self.setWindowOpacity(opacity)
-        
-        self.calculate_comment_rows()
-        for comment in self.comments:
-            total_distance = self.width() + comment['width']
-            comment['speed'] = total_distance / self.comment_speed
-        
-        # 画像の速度も更新
-        for image_id, pos in self.image_positions.items():
-            total_distance = self.width() + pos['width']
-            pos['speed'] = total_distance / self.comment_speed
-        
-        # 設定更新後に値を確認
-        logger.debug(f"update_settings 実行後 - display_images: {self.settings.get('display_images', True)}")
-        self.update()
 
 if __name__ == "__main__":
     import time

@@ -42,7 +42,10 @@ class SettingsDialog(QDialog):
             "ng_ids": [],  # NGリスト追加
             "ng_names": [],
             "ng_texts": [],
-            "display_images": True  # 新しい設定項目を追加（デフォルトは表示）
+            "display_images": True,
+            "write_window_opacity": 1.0,
+            "hide_name_mail_on_detach": False,
+            "hide_image_urls": True  # 新しい設定項目（デフォルトで非表示）
         }
         
         self.load_settings()
@@ -214,6 +217,10 @@ class SettingsDialog(QDialog):
         self.display_images_checkbox = QCheckBox("画像を表示する")
         self.display_images_checkbox.setChecked(self.settings.get("display_images", True))
         display_form.addRow("", self.display_images_checkbox)
+
+        self.hide_image_urls_checkbox = QCheckBox("画像URL箇所を非表示にし先頭に[📷]を追加する")
+        self.hide_image_urls_checkbox.setChecked(self.settings.get("hide_image_urls", True))
+        display_form.addRow("", self.hide_image_urls_checkbox)
 
         # 分離ウィンドウ透明度のスライダー追加
         self.write_window_opacity_slider = QSlider(Qt.Horizontal)
@@ -494,6 +501,7 @@ class SettingsDialog(QDialog):
         self.settings["spacing"] = self.spacing_spin.value()
         self.settings["write_window_opacity"] = self.write_window_opacity_slider.value() / 100.0
         self.settings["display_images"] = self.display_images_checkbox.isChecked()  # 確実に保存
+        self.settings["hide_image_urls"] = self.hide_image_urls_checkbox.isChecked()  # 新しい設定を保存
 
         # 影の方向をリストとして保存
         shadow_directions = []

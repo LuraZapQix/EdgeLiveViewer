@@ -1220,7 +1220,8 @@ class MainWindow(QMainWindow):
             "auth_token": None,
             "tinker_token": None,
             "hide_name_mail_on_detach": False,
-            "display_images": True  # 新しい設定項目を追加
+            "display_images": True,
+            "hide_image_urls": True  # 新しい設定項目
         }
         
         try:
