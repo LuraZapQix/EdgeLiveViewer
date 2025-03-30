@@ -46,3 +46,6 @@
 
 ## 貢献
 バグ報告や機能提案は[Issues](https://github.com/LuraZapQix/EdgeLiveViewer/issues)へ。
+
+## ライセンス
+このプロジェクトは[MITライセンス](LICENSE)の下で公開されています。
