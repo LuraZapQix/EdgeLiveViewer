@@ -182,8 +182,8 @@ class CommentOverlayWindow(QWidget):
         self.image_queue_timer.timeout.connect(self.process_image_queue)
         self.image_queue_timer.start(100)  # 100ミリ秒ごとにキューをチェック
 
-        self.image_cache = {}  # 画像のキャッシュを保持する辞書
-        self.max_cache_size = 20  # キャッシュの最大サイズ
+        # self.image_cache = {}  # 画像のキャッシュを保持する辞書
+        # self.max_cache_size = 20  # キャッシュの最大サイズ
         self.image_loader_thread = None
         self.image_url_queue = Queue()
         self.pending_images = set()  # 読み込み中の画像URLを保持
@@ -613,7 +613,7 @@ class CommentOverlayWindow(QWidget):
             self.image_loader_thread = None
 
     def handle_loaded_image(self, url, image, comment_id):
-        """読み込んだ画像を処理"""
+        """読み込んだ画像を処理（キャッシュなし）"""
         logger.info(f"画像の読み込み完了を検知: URL={url}")
         if url in self.pending_images:
             self.pending_images.remove(url)
@@ -623,50 +623,25 @@ class CommentOverlayWindow(QWidget):
                 # GIFファイルかどうかをチェック
                 if url.lower().endswith('.gif'):
                     logger.debug(f"GIFファイルを検出: {url}")
-                    # GIFアニメーションとして処理
                     try:
-                        # URLから直接GIFデータを取得
                         response = requests.get(url, headers={
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
                         })
                         if response.status_code == 200:
-                            # GIFデータをQBufferに設定
                             buffer = QBuffer()
                             buffer.setData(QByteArray(response.content))
                             buffer.open(QBuffer.ReadOnly)
-                            
-                            # GIFデータを直接QMovieに渡す
                             movie = QMovie()
                             movie.setDevice(buffer)
-                            
-                            # サイズ設定前の状態をログ
-                            logger.debug(f"GIFサイズ設定前: width={movie.scaledSize().width()}, height={movie.scaledSize().height()}")
-                            
                             movie.setScaledSize(QSize(
                                 int(self.image_height * (image.width() / image.height())),
                                 self.image_height
                             ))
-                            logger.debug(f"GIFサイズ設定後: width={movie.scaledSize().width()}, height={movie.scaledSize().height()}")
-                            
-                            # アニメーション開始前にフレームを取得
                             if not movie.isValid():
                                 logger.error(f"GIFアニメーションが無効: {url}")
                                 return
-                                
                             movie.start()
-                            logger.debug(f"GIFアニメーション開始: {url}")
-                            
-                            # バッファをムービーのプロパティとして保持
                             movie.buffer = buffer
-                            
-                            # キャッシュに保存
-                            self.image_cache[url] = movie
-                            if len(self.image_cache) > self.max_cache_size:
-                                oldest_url = next(iter(self.image_cache))
-                                del self.image_cache[oldest_url]
-                                logger.debug(f"キャッシュから古い画像を削除: {oldest_url}")
-
-                            # 画像をキューに追加
                             image_id = f"img_{int(time.time()*1000)}_{len(self.images)}"
                             self.image_queue.append((image_id, movie, comment_id))
                             logger.info(f"GIFアニメーションをキューに追加: ID={image_id}, URL={url}")
@@ -677,10 +652,6 @@ class CommentOverlayWindow(QWidget):
                 else:
                     scaled_width = int(self.image_height * (image.width() / image.height()))
                     scaled_image = image.scaled(scaled_width, self.image_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    self.image_cache[url] = scaled_image
-                    if len(self.image_cache) > self.max_cache_size:
-                        oldest_url = next(iter(self.image_cache))
-                        del self.image_cache[oldest_url]
                     image_id = f"img_{int(time.time()*1000)}_{len(self.images)}"
                     self.image_queue.append((image_id, scaled_image, comment_id))
                     logger.info(f"画像をキューに追加: ID={image_id}, URL={url}")
@@ -717,7 +688,7 @@ class CommentOverlayWindow(QWidget):
 
                 # 同一コメント内の前の画像の現在の位置を確認
                 start_x = window_width
-                min_gap = 100  # 画像間の最小間隔
+                min_gap = 60  # 画像間の最小間隔
 
                 # self.image_positions から同一 comment_id の画像を取得
                 prev_images = [pos for img_id, pos in self.image_positions.items() if pos.get('comment_id') == comment_id]
@@ -761,20 +732,13 @@ class CommentOverlayWindow(QWidget):
             logger.info(f"古い画像を削除: ID={oldest_id}")
 
     def load_image(self, url, comment_id=None):
-        """URLから画像を読み込む（非同期）"""
-        if url in self.image_cache:
-            logger.info(f"キャッシュから画像を読み込み: {url}")
-            image = self.image_cache[url]
-            image_id = f"img_{int(time.time()*1000)}_{len(self.images)}"
-            self.image_queue.append((image_id, image, comment_id))  # comment_idを追加
-            logger.info(f"キャッシュから画像をキューに追加: ID={image_id}")
-            return image
-
+        """URLから画像を読み込む（非同期、キャッシュなし）"""
         if url in self.pending_images:
             return None
 
+        logger.info(f"画像読み込みを開始: {url}")
         self.pending_images.add(url)
-        self.image_url_queue.put((url, comment_id))  # URLとcomment_idをタプルでキューに追加
+        self.image_url_queue.put((url, comment_id))  # URLとcomment_idをキューに追加
         return None
 
     def update_comments(self):
