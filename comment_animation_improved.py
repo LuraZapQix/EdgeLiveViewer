@@ -529,7 +529,7 @@ class CommentOverlayWindow(QWidget):
                 gap = window_width - right_edge
                 
                 # 隙間と速度差を考慮
-                if gap > 100:  # 最小隙間100px（調整可能）
+                if gap > 120:  # 最小隙間120px（調整可能）
                     if speed_new > current_speed:  # 新しいコメントが速い場合
                         relative_speed = speed_new - current_speed
                         time_to_catch = gap / relative_speed

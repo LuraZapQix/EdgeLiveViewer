@@ -188,6 +188,12 @@ class SettingsDialog(QDialog):
         self.max_comments_spin.setRange(10, 100)
         self.max_comments_spin.setValue(self.settings["max_comments"])
         display_form.addRow("最大コメント数:", self.max_comments_spin)
+
+        self.spacing_spin = QSpinBox()
+        self.spacing_spin.setRange(0, 40)
+        self.spacing_spin.setValue(self.settings["spacing"])
+        self.spacing_spin.setSuffix("px")
+        display_form.addRow("コメント行間:", self.spacing_spin)
         
         self.window_opacity_slider = QSlider(Qt.Horizontal)
         self.window_opacity_slider.setRange(10, 100)
@@ -198,12 +204,18 @@ class SettingsDialog(QDialog):
         self.window_opacity_slider.valueChanged.connect(self.update_window_opacity_label)
         display_form.addRow("ウィンドウ透明度:", self.window_opacity_slider)
         display_form.addRow("", self.window_opacity_label)
+
+        # 分離ウィンドウ透明度のスライダー追加
+        self.write_window_opacity_slider = QSlider(Qt.Horizontal)
+        self.write_window_opacity_slider.setRange(10, 100)  # 10%～100%
+        self.write_window_opacity_slider.setValue(int(self.settings.get("write_window_opacity", 1.0) * 100))
+        self.write_window_opacity_slider.setTickPosition(QSlider.TicksBelow)
+        self.write_window_opacity_slider.setTickInterval(10)
+        self.write_window_opacity_label = QLabel(f"{int(self.settings.get('write_window_opacity', 1.0) * 100)}%")
+        self.write_window_opacity_slider.valueChanged.connect(self.update_write_window_opacity_label)
+        display_form.addRow("分離ウィンドウ透明度:", self.write_window_opacity_slider)
+        display_form.addRow("", self.write_window_opacity_label)
         
-        self.spacing_spin = QSpinBox()
-        self.spacing_spin.setRange(0, 40)
-        self.spacing_spin.setValue(self.settings["spacing"])
-        self.spacing_spin.setSuffix("px")
-        display_form.addRow("コメント行間:", self.spacing_spin)
         
         self.hide_anchor_checkbox = QCheckBox("アンカー（>>）を含むコメントを表示しない")
         self.hide_anchor_checkbox.setChecked(self.settings.get("hide_anchor_comments", False))
@@ -221,17 +233,6 @@ class SettingsDialog(QDialog):
         self.hide_image_urls_checkbox = QCheckBox("画像URL箇所を非表示にし先頭に[📷]を追加する")
         self.hide_image_urls_checkbox.setChecked(self.settings.get("hide_image_urls", True))
         display_form.addRow("", self.hide_image_urls_checkbox)
-
-        # 分離ウィンドウ透明度のスライダー追加
-        self.write_window_opacity_slider = QSlider(Qt.Horizontal)
-        self.write_window_opacity_slider.setRange(10, 100)  # 10%～100%
-        self.write_window_opacity_slider.setValue(int(self.settings.get("write_window_opacity", 1.0) * 100))
-        self.write_window_opacity_slider.setTickPosition(QSlider.TicksBelow)
-        self.write_window_opacity_slider.setTickInterval(10)
-        self.write_window_opacity_label = QLabel(f"{int(self.settings.get('write_window_opacity', 1.0) * 100)}%")
-        self.write_window_opacity_slider.valueChanged.connect(self.update_write_window_opacity_label)
-        display_form.addRow("分離ウィンドウ透明度:", self.write_window_opacity_slider)
-        display_form.addRow("", self.write_window_opacity_label)
 
         display_group.setLayout(display_form)
         display_layout.addWidget(display_group)
