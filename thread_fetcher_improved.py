@@ -257,8 +257,7 @@ class CommentFetcher(QThread):
                     start_index = self.last_res_index + 1 if not self.is_first_fetch else max(0, len(lines) - 5)
                     batch_comments = [c for c in new_comments if c['number'] > start_index]
                     if batch_comments:
-                        if self.comment_delay > 0:
-                            self.safe_sleep(self.comment_delay)
+                        # 遅延処理を削除し、取得後すぐに通知する
                         self.comments_fetched.emit(batch_comments)
                         self.last_res_index = batch_comments[-1]['number'] - 1
                 

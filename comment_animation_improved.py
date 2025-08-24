@@ -132,6 +132,14 @@ class CommentOverlayWindow(QWidget):
         self.comment_queue = []
         self.comment_queue_max_size = 100  # キューサイズの制限を追加
 
+        self.comment_delay = 0  # コメント遅延秒数を保持
+        self.delayed_comment_queue = []  # (表示時刻, コメント)を保持するキュー
+        
+        # 遅延キューを処理するためのタイマー
+        self.delay_processor = QTimer(self)
+        self.delay_processor.timeout.connect(self.process_delayed_comments)
+        self.delay_processor.start(100)  # 100ミリ秒ごとにチェック
+
         self.flow_timer = QTimer(self)
         self.flow_timer.timeout.connect(self.flow_comment)
         self.flow_timer.start(200)
@@ -202,7 +210,7 @@ class CommentOverlayWindow(QWidget):
         logger.info("自分のコメント番号をリセットしました")
 
     def add_comment_batch(self, comments):
-        """コメントバッチを追加し、流れを開始"""
+        """コメントバッチを遅延キューまたは直接フローキューに追加"""
         batch_size = len(comments)
         self.current_batch_size = batch_size
         app = QApplication.instance()
@@ -212,18 +220,64 @@ class CommentOverlayWindow(QWidget):
         else:
             self.current_update_interval = 1.0
 
-        # キューサイズを制限
-        if len(self.comment_queue) + batch_size > self.comment_queue_max_size:
-            excess = len(self.comment_queue) + batch_size - self.comment_queue_max_size
-            self.comment_queue = self.comment_queue[excess:]
-            logger.warning(f"コメントキューが上限 {self.comment_queue_max_size} を超えたため、古いコメントを削除しました")
+        comments_added_directly = 0
+        for comment in comments:
+            comment_timestamp = comment.get('timestamp')
+            # 遅延設定が有効で、コメントにタイムスタンプがある場合
+            if self.comment_delay > 0 and comment_timestamp:
+                # 未来の表示時刻を計算
+                display_time = comment_timestamp.timestamp() + self.comment_delay
+                self.delayed_comment_queue.append((display_time, comment))
+            else:
+                # 遅延なしの場合、直接フローキューに追加
+                self.comment_queue.append(comment)
+                comments_added_directly += 1
+        
+        # 遅延キューは表示時刻順にソート
+        if self.delayed_comment_queue:
+            self.delayed_comment_queue.sort(key=lambda x: x[0])
+        
+        # 直接追加されたコメントがあれば、フローを開始
+        if comments_added_directly > 0:
+            if len(self.comment_queue) > self.comment_queue_max_size:
+                excess = len(self.comment_queue) - self.comment_queue_max_size
+                self.comment_queue = self.comment_queue[excess:]
+                logger.warning(f"コメントキューが上限 {self.comment_queue_max_size} を超えたため、古いコメントを削除しました")
+            
+            if self.flow_timer.isActive():
+                self.flow_timer.stop()
+            self.schedule_next_comment()
 
-        self.comment_queue.extend(comments)
-        logger.debug(f"コメントをキューに追加: 数={batch_size}, キュー長={len(self.comment_queue)}")
+    def process_delayed_comments(self):
+        """遅延キューをチェックし、表示時間になったコメントをフローキューに移す"""
+        if not self.delayed_comment_queue:
+            return
 
-        if self.flow_timer.isActive():
-            self.flow_timer.stop()
-        self.schedule_next_comment()
+        current_timestamp = time.time()
+        
+        # 表示時刻になったコメントを特定 (リストがソートされていることを利用)
+        num_ready = 0
+        for display_time, comment in self.delayed_comment_queue:
+            if current_timestamp >= display_time:
+                num_ready += 1
+            else:
+                break # リストはソートされているので、これ以降はチェック不要
+
+        if num_ready > 0:
+            # 表示準備ができたコメントを取得
+            ready_comments = [comment for _, comment in self.delayed_comment_queue[:num_ready]]
+            # 遅延キューから削除
+            self.delayed_comment_queue = self.delayed_comment_queue[num_ready:]
+
+            was_queue_empty = not self.comment_queue
+            self.comment_queue.extend(ready_comments)
+            logger.debug(f"{len(ready_comments)}件の遅延コメントをフローキューに追加。キュー長={len(self.comment_queue)}")
+
+            # フローが止まっていた場合 (キューが空だった場合)、再開する
+            if was_queue_empty:
+                if self.flow_timer.isActive():
+                    self.flow_timer.stop()
+                self.schedule_next_comment()
 
     def schedule_next_comment(self):
         """次のコメントをスケジュール"""
@@ -904,6 +958,8 @@ class CommentOverlayWindow(QWidget):
         self.ng_texts = self.settings.get("ng_texts", [])
         self.current_update_interval = self.settings.get("update_interval", 1.0)
         # hide_image_urls は self.settings に含まれるため追加処理不要
+
+        self.comment_delay = self.settings.get("comment_delay", 0)
         
         opacity = self.settings.get("window_opacity", 0.8)
         self.setWindowOpacity(opacity)
