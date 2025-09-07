@@ -120,8 +120,9 @@ class ThreadFetcher(QThread):
         return threads
     
     def stop(self):
+        # ### 修正: self.wait() を削除 ###
+        logger.info("ThreadFetcher の停止をリクエスト")
         self.running = False
-        self.wait()
 
 from datetime import datetime
 import time
@@ -453,10 +454,143 @@ class NextThreadFinder(QThread):
         return 0, False  # 数字がない場合は0とFalseを返す
     
     def stop(self):
+        logger.info(f"NextThreadFinder {self.thread_id} の停止をリクエスト")
         self.running = False
-        self.wait()
-        logger.info(f"NextThreadFinder が停止しました（スレッドID: {self.thread_id}）")
 
+# ### 機能追加: 本流スレッドを監視する MainstreamWatcher クラスを追加 ###
+class MainstreamWatcher(QThread):
+    """次スレ接続後、さらに勢いの高い本流スレッドがないか監視するクラス"""
+    mainstream_thread_found = pyqtSignal(dict)
+    search_finished = pyqtSignal()
+
+    def __init__(self, original_title, original_thread_id, current_thread_id, watch_duration=60, momentum_ratio=1.5, min_res=10, parent=None):
+        super().__init__(parent)
+        self.original_title = original_title
+        self.original_thread_id = original_thread_id # 埋まったスレッドのIDを保持
+        self.current_thread_id = current_thread_id
+        self.watch_duration = watch_duration
+        self.momentum_ratio = momentum_ratio
+        self.min_res = min_res
+        self.running = True
+        self.base_url = "https://bbs.eddibb.cc/liveedge"
+
+    # ### 修正箇所: ここからが新しいロジック ###
+    def run(self):
+        start_time = time.time()
+        logger.info(f"本流スレッドの監視を開始します (軽量モード)。監視時間: {self.watch_duration}秒")
+
+        while self.running and (time.time() - start_time) < self.watch_duration:
+            try:
+                # 1. subject.txt から全スレッドの基本情報を取得 (通信1回)
+                all_threads = self.fetch_threads_basic_info()
+                if not all_threads or not self.running: break
+
+                # 2. 現在接続中のスレッド情報を取得
+                current_thread = next((t for t in all_threads if t['id'] == self.current_thread_id), None)
+                if not current_thread:
+                    logger.warning(f"現在接続中のスレッド {self.current_thread_id} が一覧に見つかりません。監視を中止します。")
+                    break
+                
+                # 3. 事前フィルタリングで候補を高速に絞り込む (通信なし)
+                candidate_threads = self.filter_candidates(all_threads)
+
+                # 4. 絞り込んだ候補と現在スレッドの勢いを計算 (通信は候補数+1回のみ)
+                threads_to_fetch_momentum = [current_thread] + candidate_threads
+                self.calculate_momentum_for_list(threads_to_fetch_momentum)
+                
+                current_momentum = int(current_thread.get('momentum', '0').replace(',', ''))
+                if current_momentum == 0: # 勢いがない場合は比較不能
+                    time.sleep(5)
+                    continue
+
+                # 5. 最終比較と判断
+                for thread in candidate_threads:
+                    if int(thread.get('momentum', '0').replace(',', '')) > current_momentum * self.momentum_ratio:
+                        logger.info(f"本流スレッドを発見しました: {thread['title']} (勢い: {thread['momentum']})")
+                        if self.running: self.mainstream_thread_found.emit(thread)
+                        self.running = False
+                        break
+                
+                if not self.running: break
+            except Exception as e:
+                logger.error(f"本流スレッド監視中にエラーが発生しました: {e}")
+
+            time.sleep(5)
+
+        logger.info("本流スレッドの監視を終了します。")
+        if self.running: self.search_finished.emit()
+
+    def fetch_threads_basic_info(self):
+        """subject.txt のみからスレッド情報を取得する軽量メソッド"""
+        try:
+            subject_url = f"{self.base_url}/subject.txt"
+            response = requests.get(subject_url, timeout=2)
+            response.raise_for_status()
+            threads = []
+            for line in response.text.splitlines():
+                if not line: continue
+                try:
+                    thread_id_dat, title_res = line.split("<>", 1)
+                    title_res_match = re.search(r'(.*)\s*\((\d+)\)$', title_res)
+                    if not title_res_match: continue
+                    threads.append({
+                        'id': thread_id_dat.replace(".dat", ""),
+                        'title': html.unescape(title_res_match.group(1).strip()),
+                        'res_count': title_res_match.group(2)
+                    })
+                except Exception: continue
+            return threads
+        except Exception:
+            return []
+
+    def filter_candidates(self, all_threads):
+        """通信なしで、本流の可能性があるスレッドを絞り込む"""
+        candidates = []
+        for thread in all_threads:
+            # ### 修正箇所2: 自分自身と「埋まったスレッド」を候補から除外 ###
+            if thread['id'] == self.current_thread_id: continue
+            if thread['id'] == self.original_thread_id: continue
+            if int(thread['res_count']) >= 1000: continue
+            if int(thread['res_count']) < self.min_res: continue
+            if difflib.SequenceMatcher(None, self.original_title, thread['title']).ratio() < 0.6: continue
+            candidates.append(thread)
+        return candidates
+        
+    def calculate_momentum_for_list(self, thread_list):
+        """指定されたスレッドのリストに対してのみ、勢いを計算する"""
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_thread = {executor.submit(self.fetch_dat_timestamp, thread['id']): thread for thread in thread_list}
+            for future in future_to_thread:
+                if not self.running: break
+                thread = future_to_thread[future]
+                try:
+                    timestamp = future.result()
+                    momentum = "0"
+                    if timestamp > 0:
+                        time_diff = time.time() - timestamp
+                        if time_diff > 0:
+                            momentum = f"{int(float(thread['res_count']) / time_diff * 86400):,}"
+                    thread['momentum'] = momentum
+                except Exception:
+                    thread['momentum'] = "0"
+
+    def fetch_dat_timestamp(self, thread_id):
+        try:
+            dat_url = f"{self.base_url}/dat/{thread_id}.dat"
+            response = requests.get(dat_url, timeout=0.5)
+            response.raise_for_status()
+            date_match = re.search(r'(\d{4}/\d{2}/\d{2}).*?(\d{2}:\d{2}:\d{2})', response.text.split('\n', 1)[0])
+            if date_match:
+                return datetime.strptime(f"{date_match.group(1)} {date_match.group(2)}", '%Y/%m/%d %H:%M:%S').timestamp()
+            return 0
+        except Exception:
+            return 0
+    
+    def stop(self):
+        logger.info(f"MainstreamWatcher {self.original_title} の停止をリクエスト")
+        self.running = False
+    # ### ここまでが修正分 ###
+    
 if __name__ == "__main__":
     import sys
     from PyQt5.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
