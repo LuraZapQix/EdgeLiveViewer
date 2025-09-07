@@ -383,6 +383,7 @@ class CommentOverlayWindow(QWidget):
         logger.info(f"システムメッセージ追加: {message}, 種別: {message_type}, ID: {comment_id}, row: {row}, y: {y_position}")
         self.update()
 
+    # ### 機能修正: Y座標計算と完全に一致する正しい計算式に修正 ###
     def calculate_comment_rows(self):
         font = QFont(self.font_family)
         font.setPointSize(self.font_size)
@@ -392,8 +393,16 @@ class CommentOverlayWindow(QWidget):
         line_height = font_metrics.height()
         self.row_height = line_height + self.spacing
         
-        self.max_rows = max(1, (self.height() - self.move_area_height - line_height) // self.row_height)
-        self.row_usage = {}
+        # Y座標の計算式から逆算した、本当に利用可能な高さを計算
+        # (ウィンドウの高さ - 上部マージン - 下部マージンとしてのline_height)
+        # これにより、最後の行が下端にぴったり合うようになる
+        available_height = self.height() - self.move_area_height - line_height
+        
+        if self.row_height > 0:
+            self.max_rows = max(1, available_height // self.row_height + 1)
+        else:
+            self.max_rows = 1
+    # ### ここまでが修正箇所 ###
 
     def update_cursor(self, pos):
         if self.is_minimized:
@@ -565,50 +574,67 @@ class CommentOverlayWindow(QWidget):
         self.calculate_comment_rows()
         self.update()
 
+    # ### 機能追加: 衝突判定ロジックをヘルパー関数として分離 ###
+    def _check_collision(self, speed_new, existing_comment):
+        """新しいコメントが既存のコメントと衝突しないかチェックする"""
+        if not existing_comment:
+            return True # 比較対象がなければ常に安全
+
+        right_edge = existing_comment['x'] + existing_comment['width']
+        current_speed = existing_comment['speed']
+        gap = self.width() - right_edge
+
+        # 先行コメントとの間に十分な隙間があるか
+        if gap < 120:  # 最小隙間
+            return False
+
+        # 新しいコメントの方が速い場合、追いつかないか
+        if speed_new > current_speed:
+            relative_speed = speed_new - current_speed
+            time_to_catch = gap / relative_speed
+            if time_to_catch < 2.0:  # 追いつくまでの時間にマージンがない
+                return False
+        
+        return True # 衝突しない
+
+    # ### 機能改良: 3段階ロジックを正しく実装 ###
     def find_available_row(self, comment_width):
-        window_width = self.width()
+        speed_new = (self.width() + comment_width) / self.comment_speed
+
+        # --- フェーズ1: 通常の空き行を探す ---
         available_rows = []
-        
-        # 新しいコメントの速度を計算
-        total_distance_new = window_width + comment_width
-        speed_new = total_distance_new / self.comment_speed
-        
-        for row in range(self.max_rows):
-            if row in self.row_usage:
-                current_comment = self.row_usage[row]
-                right_edge = current_comment['x'] + current_comment['width']
-                current_speed = current_comment['speed']
-                
-                # 現在の隙間
-                gap = window_width - right_edge
-                
-                # 隙間と速度差を考慮
-                if gap > 120:  # 最小隙間120px（調整可能）
-                    if speed_new > current_speed:  # 新しいコメントが速い場合
-                        relative_speed = speed_new - current_speed
-                        time_to_catch = gap / relative_speed
-                        if time_to_catch >= 2.0:  # 2秒以上のマージン（緩和）
-                            available_rows.append(row)
-                    else:
-                        # 新しいコメントが遅い場合、追い付かないので利用可能
-                        available_rows.append(row)
+        for r in range(self.max_rows):
+            if r not in self.row_usage:
+                available_rows.append(r)
             else:
-                available_rows.append(row)
+                if self._check_collision(speed_new, self.row_usage.get(r)):
+                    available_rows.append(r)
         
-        # 利用可能な行から選択
         if available_rows:
-            row = min(available_rows)
-        else:
-            row = min(self.row_usage.keys(), key=lambda k: self.row_usage[k]['x'] + self.row_usage[k]['width'])
+            return min(available_rows)
+
+        # --- フェーズ2: 行と行の間 (中間行) を探す ---
+        available_half_rows = []
+        for r in range(self.max_rows - 1):
+            # 前提: 隣接する両方の通常行が使用中であること
+            if r in self.row_usage and (r + 1) in self.row_usage:
+                half_row = r + 0.5
+                # その中間行トラックが空いているか、衝突しないかチェック
+                if half_row not in self.row_usage:
+                    available_half_rows.append(half_row)
+                else:
+                    if self._check_collision(speed_new, self.row_usage.get(half_row)):
+                        available_half_rows.append(half_row)
         
-        # 新しいコメントを仮登録
-        self.row_usage[row] = {
-            'x': float(window_width),
-            'width': comment_width,
-            'speed': speed_new,
-        }
+        if available_half_rows:
+            return min(available_half_rows)
+
+        # --- フェーズ3: 最終手段 (強制的に重ねる) ---
+        if self.row_usage:
+            return min(self.row_usage.keys(), key=lambda k: self.row_usage[k]['x'] + self.row_usage[k]['width'])
         
-        return row
+        return 0
+    # ### ここまでが修正箇所 ###
 
     def extract_image_url(self, text):
         """テキストから画像URLを抽出"""
