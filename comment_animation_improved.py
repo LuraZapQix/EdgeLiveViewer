@@ -404,6 +404,11 @@ class CommentOverlayWindow(QWidget):
             self.max_rows = 1
     # ### ここまでが修正箇所 ###
 
+    def resizeEvent(self, event):
+        """ウィンドウサイズが変更されたときに自動的に呼び出される"""
+        super().resizeEvent(event)
+        self.calculate_comment_rows()
+
     def update_cursor(self, pos):
         if self.is_minimized:
             self.setCursor(Qt.ArrowCursor)
@@ -571,7 +576,6 @@ class CommentOverlayWindow(QWidget):
         self.setGeometry(new_x, new_y, new_width, new_height)
         self.drag_position = global_pos
 
-        self.calculate_comment_rows()
         self.update()
 
     # ### 機能追加: 衝突判定ロジックをヘルパー関数として分離 ###
@@ -597,7 +601,7 @@ class CommentOverlayWindow(QWidget):
         
         return True # 衝突しない
 
-    # ### 機能改良: 3段階ロジックを正しく実装 ###
+# ### 機能改良: 3段階ロジックを正しく実装 ###
     def find_available_row(self, comment_width):
         speed_new = (self.width() + comment_width) / self.comment_speed
 
@@ -613,24 +617,27 @@ class CommentOverlayWindow(QWidget):
         if available_rows:
             return min(available_rows)
 
-        # --- フェーズ2: 行と行の間 (中間行) を探す ---
-        available_half_rows = []
+        # --- フェーズ2: 行と行の間 (中間行) を探し、最初に見つかった場所を返す ---
         for r in range(self.max_rows - 1):
             # 前提: 隣接する両方の通常行が使用中であること
             if r in self.row_usage and (r + 1) in self.row_usage:
-                half_row = r + 0.5
-                # その中間行トラックが空いているか、衝突しないかチェック
-                if half_row not in self.row_usage:
-                    available_half_rows.append(half_row)
-                else:
-                    if self._check_collision(speed_new, self.row_usage.get(half_row)):
-                        available_half_rows.append(half_row)
-        
-        if available_half_rows:
-            return min(available_half_rows)
+                # この中間スロット (r と r+1 の間) が既に他のコメントで使われているかチェック
+                is_slot_occupied = False
+                for key in self.row_usage.keys():
+                    if isinstance(key, float) and r < key < r + 1:
+                        # 既にある中間コメントと衝突しないかチェック
+                        if not self._check_collision(speed_new, self.row_usage[key]):
+                            is_slot_occupied = True
+                            break # 衝突するのでこのスロットは使えない
+                
+                # この中間スロットが空いていれば、ランダムな位置を計算して即座に返す
+                if not is_slot_occupied:
+                    random_offset = random.uniform(0.3, 0.7)
+                    return r + random_offset
 
         # --- フェーズ3: 最終手段 (強制的に重ねる) ---
         if self.row_usage:
+            # 画面上で最も左に進んでいるコメントの行を返す
             return min(self.row_usage.keys(), key=lambda k: self.row_usage[k]['x'] + self.row_usage[k]['width'])
         
         return 0
