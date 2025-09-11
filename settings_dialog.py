@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                            QSlider, QComboBox, QPushButton, QColorDialog,
                            QGroupBox, QFormLayout, QSpinBox, QCheckBox,
                            QTabWidget, QWidget, QFileDialog, QMessageBox,
-                           QListWidget, QLineEdit)  # 追加
+                           QListWidget, QLineEdit, QDoubleSpinBox)  # QDoubleSpinBox を追加
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QColor, QFont, QFontDatabase
 
@@ -45,7 +45,11 @@ class SettingsDialog(QDialog):
             "display_images": True,
             "write_window_opacity": 1.0,
             "hide_name_mail_on_detach": False,
-            "hide_image_urls": True  # 新しい設定項目（デフォルトで非表示）
+            "hide_image_urls": True,  # 新しい設定項目（デフォルトで非表示）
+            # ### 機能追加: 本流スレ監視設定のデフォルト値を追加 ###
+            "watch_mainstream_thread": True,
+            "watch_duration": 60,
+            "momentum_ratio": 1.5
         }
         
         self.load_settings()
@@ -276,6 +280,31 @@ class SettingsDialog(QDialog):
         
         network_group.setLayout(network_form)
         network_layout.addWidget(network_group)
+
+        # ### 機能追加: 本流スレ監視設定のUIを追加 ###
+        mainstream_group = QGroupBox("本流スレ監視設定")
+        mainstream_form = QFormLayout()
+
+        self.watch_mainstream_check = QCheckBox("次スレ接続後に本流スレを監視する")
+        self.watch_mainstream_check.setChecked(self.settings.get("watch_mainstream_thread", True))
+        mainstream_form.addRow(self.watch_mainstream_check)
+
+        self.watch_duration_spin = QSpinBox()
+        self.watch_duration_spin.setRange(10, 300)  # 10秒から5分
+        self.watch_duration_spin.setValue(self.settings.get("watch_duration", 60))
+        self.watch_duration_spin.setSuffix("秒")
+        mainstream_form.addRow("監視時間:", self.watch_duration_spin)
+
+        self.momentum_ratio_spin = QDoubleSpinBox()
+        self.momentum_ratio_spin.setRange(1.1, 5.0)
+        self.momentum_ratio_spin.setSingleStep(0.1)
+        self.momentum_ratio_spin.setValue(self.settings.get("momentum_ratio", 1.5))
+        self.momentum_ratio_spin.setSuffix("倍以上")
+        mainstream_form.addRow("勢い倍率:", self.momentum_ratio_spin)
+
+        mainstream_group.setLayout(mainstream_form)
+        network_layout.addWidget(mainstream_group)
+        # ### ここまでが追加分 ###
         
         playback_group = QGroupBox("過去ログ再生設定")
         playback_form = QFormLayout()
@@ -504,6 +533,11 @@ class SettingsDialog(QDialog):
         self.settings["display_images"] = self.display_images_checkbox.isChecked()  # 確実に保存
         self.settings["hide_image_urls"] = self.hide_image_urls_checkbox.isChecked()  # 新しい設定を保存
 
+        # ### 機能追加: 本流スレ監視設定を保存 ###
+        self.settings["watch_mainstream_thread"] = self.watch_mainstream_check.isChecked()
+        self.settings["watch_duration"] = self.watch_duration_spin.value()
+        self.settings["momentum_ratio"] = self.momentum_ratio_spin.value()
+
         # 影の方向をリストとして保存
         shadow_directions = []
         if self.shadow_bottom_right.isChecked():
@@ -541,30 +575,16 @@ class SettingsDialog(QDialog):
         if QMessageBox.question(self, "設定リセット", "設定を初期値に戻しますか？",
                               QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             self.settings = {
-                "font_size": 31,
-                "font_weight": 75,
-                "font_shadow": 2,
-                "font_color": "#FFFFFF",
-                "font_family": "MS PGothic",
-                "font_shadow_direction": "bottom-right",
-                "font_shadow_directions": ["bottom-right"],  # リスト形式でデフォルトは "bottom-right" のみ
-                "font_shadow_color": "#000000",
-                "comment_speed": 6,
-                "comment_delay": 0,
-                "display_position": "center",
-                "max_comments": 80,
-                "window_opacity": 0.8,
-                "update_interval": 5,
-                "playback_speed": 1.0,
-                "auto_next_thread": True,
-                "next_thread_search_duration": 180,
-                "hide_anchor_comments": False,
-                "hide_url_comments": False,
-                "spacing": 30,
-                "ng_ids": [],
-                "ng_names": [],
-                "ng_texts": [],
-                "display_images": True  # リセット時もデフォルトは表示
+                "font_size": 31, "font_weight": 75, "font_shadow": 2, "font_color": "#FFFFFF",
+                "font_family": "MS PGothic", "font_shadow_direction": "bottom-right",
+                "font_shadow_directions": ["bottom-right"], "font_shadow_color": "#000000",
+                "comment_speed": 6, "comment_delay": 0, "display_position": "center",
+                "max_comments": 80, "window_opacity": 0.8, "update_interval": 5,
+                "playback_speed": 1.0, "auto_next_thread": True, "next_thread_search_duration": 180,
+                "hide_anchor_comments": False, "hide_url_comments": False, "spacing": 30,
+                "ng_ids": [], "ng_names": [], "ng_texts": [], "display_images": True,
+                # ### 機能追加: 本流スレ監視設定をリセット ###
+                "watch_mainstream_thread": True, "watch_duration": 60, "momentum_ratio": 1.5
             }
             self.font_size_slider.setValue(self.settings["font_size"])
             self.font_weight_slider.setValue(self.settings["font_weight"])  # 修正: スライダーにリセット
@@ -600,7 +620,10 @@ class SettingsDialog(QDialog):
             self.ng_name_list.clear()
             self.ng_text_list.clear()
             self.display_images_checkbox.setChecked(self.settings["display_images"])  # 新しいチェックボックスをリセット
-            
+            # ### 機能追加: UIにリセット値を反映 ###
+            self.watch_mainstream_check.setChecked(self.settings["watch_mainstream_thread"])
+            self.watch_duration_spin.setValue(self.settings["watch_duration"])
+            self.momentum_ratio_spin.setValue(self.settings["momentum_ratio"])
 
 if __name__ == "__main__":
     import sys

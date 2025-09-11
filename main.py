@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt, QTimer, QUrl, QPoint
 from PyQt5.QtGui import QFont, QColor, QDesktopServices
 
-from thread_fetcher_improved import ThreadFetcher, CommentFetcher, NextThreadFinder
+from thread_fetcher_improved import ThreadFetcher, CommentFetcher, NextThreadFinder, MainstreamWatcher
 from comment_animation_improved import CommentOverlayWindow
 from settings_dialog import SettingsDialog
 
@@ -290,6 +290,10 @@ class MainWindow(QMainWindow):
         self.thread_fetcher = None
         self.comment_fetcher = None
         self.next_thread_finder = None
+        # ### 機能追加: MainstreamWatcher と元スレタイトルのプロパティを追加 ###
+        self.mainstream_watcher = None
+        self.original_thread_title_for_watcher = None
+
         self.current_thread_id = None
         self.current_thread_title = None
         self.is_past_thread = False
@@ -518,6 +522,10 @@ class MainWindow(QMainWindow):
         
         if self.next_thread_finder is not None:
             self.next_thread_finder.stop()
+        
+        # ### 機能追加: MainstreamWatcher も停止させる ###
+        if self.mainstream_watcher is not None:
+            self.mainstream_watcher.stop()
         
         if self.overlay_window is not None and self.overlay_window.isVisible():
             self.overlay_window.close()
@@ -1029,6 +1037,13 @@ class MainWindow(QMainWindow):
         self.connect_to_thread_by_id(thread_id)
     
     def connect_to_thread_by_id(self, thread_id, thread_title=None):
+
+        # ### 機能追加: 既存のウォッチャーを停止させる処理を追加 ###
+        if self.mainstream_watcher and self.mainstream_watcher.isRunning():
+            self.mainstream_watcher.stop()
+            logger.info("本流スレ監視を停止しました（新しいスレッド接続）")
+            self.mainstream_watcher = None
+        
         if self.next_thread_finder is not None and self.next_thread_finder.isRunning():
             self.next_thread_finder.stop()
             logger.info(f"次スレ検索を停止しました（新しいスレッド接続: {thread_id}）")
@@ -1149,9 +1164,37 @@ class MainWindow(QMainWindow):
         next_thread_title = next_thread["title"]
         logger.info(f"次スレが見つかりました: {next_thread_id} - {next_thread_title}")
         
+        # ### 修正箇所: 監視用に「埋まったスレのID」も保存 ###
+        original_thread_id_for_watcher = self.current_thread_id
+        original_title_for_watcher = self.current_thread_title
+
+        # まずは次スレに接続
         self.connect_to_thread_by_id(next_thread_id, next_thread_title)
         self.overlay_window.add_system_message(f"次スレ： {next_thread_title} に接続しました。", message_type="next_thread_connected")
-        self.statusBar().showMessage(f"次スレ {next_thread_id} - {next_thread_title} に接続しました")
+
+        # ### 機能追加: 設定が有効なら本流スレッドの監視を開始 ###
+        if self.settings.get("watch_mainstream_thread", True):
+            watch_duration = self.settings.get("watch_duration", 60)
+            momentum_ratio = self.settings.get("momentum_ratio", 1.5)
+            
+            if self.mainstream_watcher and self.mainstream_watcher.isRunning():
+                self.mainstream_watcher.stop()
+
+            # ### 修正箇所: MainstreamWatcher に original_thread_id を渡す ###
+            self.mainstream_watcher = MainstreamWatcher(
+                original_title=original_title_for_watcher,
+                original_thread_id=original_thread_id_for_watcher,
+                current_thread_id=next_thread_id,
+                watch_duration=watch_duration,
+                momentum_ratio=momentum_ratio,
+                parent=self
+            )
+            self.mainstream_watcher.mainstream_thread_found.connect(self.on_mainstream_thread_found)
+            self.mainstream_watcher.search_finished.connect(self.on_mainstream_watch_finished)
+            self.mainstream_watcher.start()
+            self.statusBar().showMessage(f"次スレに接続しました。{watch_duration}秒間、本流スレッドを監視します...")
+        else:
+            self.statusBar().showMessage(f"次スレ {next_thread_id} - {next_thread_title} に接続しました")
     
     def on_search_finished(self, success):
         if not success:
@@ -1161,6 +1204,28 @@ class MainWindow(QMainWindow):
         
         self.next_thread_finder = None
     
+    # ### 機能追加: 本流スレッドが見つかった時と監視終了時の処理を追加 ###
+    def on_mainstream_thread_found(self, thread_info):
+        mainstream_id = thread_info["id"]
+        mainstream_title = thread_info["title"]
+        
+        if self.current_thread_id == mainstream_id:
+            logger.info("発見された本流スレッドは現在接続中のスレッドと同じため、切り替えません。")
+            return
+
+        logger.info(f"本流スレッドに切り替えます: {mainstream_title} (ID: {mainstream_id})")
+        self.connect_to_thread_by_id(mainstream_id, mainstream_title)
+        
+        if self.overlay_window:
+            self.overlay_window.add_system_message(f"勢いの高い本流スレッド『{mainstream_title}』に切り替えました。", message_type="mainstream_switched")
+        self.statusBar().showMessage(f"本流スレッド『{mainstream_title}』に切り替えました。")
+
+    def on_mainstream_watch_finished(self):
+        # メインスレッドが見つからずに正常終了した場合
+        if self.mainstream_watcher:
+             self.statusBar().showMessage("本流スレッドの監視が終了しました。")
+        self.mainstream_watcher = None
+
     def on_thread_over_1000(self, message):
         self.overlay_window.add_system_message(message, message_type="thread_over_1000")
     
@@ -1190,38 +1255,17 @@ class MainWindow(QMainWindow):
     
     def load_settings(self):
         default_settings = {
-            "font_size": 31,
-            "font_weight": 75,
-            "font_shadow": 2,
-            "font_color": "#FFFFFF",
-            "font_family": "MS PGothic",
-            "font_shadow_directions": ["bottom-right"],
-            "font_shadow_color": "#000000",
-            "comment_speed": 6.0,
-            "comment_delay": 0,
-            "display_position": "top",
-            "max_comments": 80,
-            "window_opacity": 0.8,
-            "update_interval": 5,
-            "playback_speed": 1.0,
-            "auto_next_thread": True,
-            "next_thread_search_duration": 180,
-            "first_launch": True,
-            "overlay_x": 100,
-            "overlay_y": 100,
-            "overlay_width": 600,
-            "overlay_height": 800,
-            "hide_anchor_comments": False,
-            "hide_url_comments": False,
-            "spacing": 30,
-            "ng_ids": [],
-            "ng_names": [],
-            "ng_texts": [],
-            "auth_token": None,
-            "tinker_token": None,
-            "hide_name_mail_on_detach": False,
-            "display_images": True,
-            "hide_image_urls": True  # 新しい設定項目
+            "font_size": 31, "font_weight": 75, "font_shadow": 2, "font_color": "#FFFFFF", "font_family": "MS PGothic",
+            "font_shadow_directions": ["bottom-right"], "font_shadow_color": "#000000", "comment_speed": 6.0,
+            "comment_delay": 0, "display_position": "top", "max_comments": 80, "window_opacity": 0.8, "update_interval": 5,
+            "playback_speed": 1.0, "auto_next_thread": True, "next_thread_search_duration": 180, "first_launch": True,
+            "overlay_x": 100, "overlay_y": 100, "overlay_width": 600, "overlay_height": 800,
+            "hide_anchor_comments": False, "hide_url_comments": False, "spacing": 30, "ng_ids": [], "ng_names": [], "ng_texts": [],
+            "auth_token": None, "tinker_token": None, "hide_name_mail_on_detach": False, "display_images": True, "hide_image_urls": True,
+            # ### 機能追加: 本流スレ監視設定のデフォルト値を追加 ###
+            "watch_mainstream_thread": True,
+            "watch_duration": 60,
+            "momentum_ratio": 1.5,
         }
         
         try:
