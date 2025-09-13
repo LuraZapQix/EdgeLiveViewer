@@ -150,10 +150,13 @@ class CommentOverlayWindow(QWidget):
         self.move_area_height = 25
         self.close_button_size = 22
         self.minimize_button_size = 22
+        self.maximize_button_size = 22
         self.button_margin = 2
         self.is_hovering_close = False
         self.is_hovering_minimize = False
+        self.is_hovering_maximize = False
         self.is_minimized = False
+        self.normal_geometry = None
 
         self.calculate_comment_rows()
         self.row_usage = {}
@@ -433,13 +436,23 @@ class CommentOverlayWindow(QWidget):
             self.minimize_button_size,
             self.minimize_button_size
         )
+        maximize_button_rect = QRect(
+            self.width() - self.close_button_size - self.minimize_button_size - self.maximize_button_size - self.button_margin * 5,
+            self.button_margin,
+            self.maximize_button_size,
+            self.maximize_button_size
+        )
 
         self.is_hovering_close = close_button_rect.contains(pos)
         self.is_hovering_minimize = minimize_button_rect.contains(pos)
+        self.is_hovering_maximize = maximize_button_rect.contains(pos)
         if self.is_hovering_close:
             self.setCursor(Qt.PointingHandCursor)
             self.resize_mode = None
         elif self.is_hovering_minimize:
+            self.setCursor(Qt.PointingHandCursor)
+            self.resize_mode = None
+        elif self.is_hovering_maximize:
             self.setCursor(Qt.PointingHandCursor)
             self.resize_mode = None
         elif in_move_area and not (left or right):
@@ -495,6 +508,12 @@ class CommentOverlayWindow(QWidget):
                 self.minimize_button_size,
                 self.minimize_button_size
             )
+            maximize_button_rect = QRect(
+                self.width() - self.close_button_size - self.minimize_button_size - self.maximize_button_size - self.button_margin * 5,
+                self.button_margin,
+                self.maximize_button_size,
+                self.maximize_button_size
+            )
 
             if close_button_rect.contains(pos):
                 logger.info("Close button clicked, closing window")
@@ -502,6 +521,13 @@ class CommentOverlayWindow(QWidget):
             elif minimize_button_rect.contains(pos):
                 logger.info("Minimize button clicked, hiding move area and borders")
                 self.is_minimized = True
+                self.update()
+            elif maximize_button_rect.contains(pos):
+                logger.info("Maximize button clicked")
+                if self.isMaximized():
+                    self.showNormal()
+                else:
+                    self.showMaximized()
                 self.update()
             elif pos.y() <= self.move_area_height and self.resize_mode is None:
                 self.dragging = True
@@ -1061,6 +1087,21 @@ class CommentOverlayWindow(QWidget):
                 minimize_button_x + 6, minimize_button_y + self.minimize_button_size // 2,
                 minimize_button_x + self.minimize_button_size - 6, minimize_button_y + self.minimize_button_size // 2
             )
+
+            maximize_button_x = self.width() - self.close_button_size - self.minimize_button_size - self.maximize_button_size - self.button_margin * 7
+            maximize_button_y = self.button_margin
+            if self.is_hovering_maximize:
+                painter.setPen(QPen(QColor(230, 230, 230, 200), 2))
+            else:
+                painter.setPen(QPen(QColor(230, 230, 230, 150), 2))
+            
+            if self.isMaximized():
+                # Draw restore icon
+                painter.drawRect(maximize_button_x + 8, maximize_button_y + 6, 8, 8)
+                painter.drawRect(maximize_button_x + 6, maximize_button_y + 8, 8, 8)
+            else:
+                # Draw maximize icon
+                painter.drawRect(maximize_button_x + 6, maximize_button_y + 6, 10, 10)
 
             painter.setBrush(QBrush(QColor(0, 0, 0, 1)))
             painter.setPen(Qt.NoPen)
