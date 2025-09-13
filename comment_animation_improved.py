@@ -430,17 +430,17 @@ class CommentOverlayWindow(QWidget):
             self.close_button_size,
             self.close_button_size
         )
-        minimize_button_rect = QRect(
-            self.width() - self.close_button_size - self.minimize_button_size - self.button_margin * 3,
-            self.button_margin,
-            self.minimize_button_size,
-            self.minimize_button_size
-        )
         maximize_button_rect = QRect(
-            self.width() - self.close_button_size - self.minimize_button_size - self.maximize_button_size - self.button_margin * 5,
+            self.width() - self.close_button_size - self.maximize_button_size - self.button_margin * 3,
             self.button_margin,
             self.maximize_button_size,
             self.maximize_button_size
+        )
+        minimize_button_rect = QRect(
+            self.width() - self.close_button_size - self.maximize_button_size - self.minimize_button_size - self.button_margin * 5,
+            self.button_margin,
+            self.minimize_button_size,
+            self.minimize_button_size
         )
 
         self.is_hovering_close = close_button_rect.contains(pos)
@@ -502,17 +502,17 @@ class CommentOverlayWindow(QWidget):
                 self.close_button_size,
                 self.close_button_size
             )
-            minimize_button_rect = QRect(
-                self.width() - self.close_button_size - self.minimize_button_size - self.button_margin * 3,
-                self.button_margin,
-                self.minimize_button_size,
-                self.minimize_button_size
-            )
             maximize_button_rect = QRect(
-                self.width() - self.close_button_size - self.minimize_button_size - self.maximize_button_size - self.button_margin * 5,
+                self.width() - self.close_button_size - self.maximize_button_size - self.button_margin * 3,
                 self.button_margin,
                 self.maximize_button_size,
                 self.maximize_button_size
+            )
+            minimize_button_rect = QRect(
+                self.width() - self.close_button_size - self.maximize_button_size - self.minimize_button_size - self.button_margin * 5,
+                self.button_margin,
+                self.minimize_button_size,
+                self.minimize_button_size
             )
 
             if close_button_rect.contains(pos):
@@ -1077,18 +1077,7 @@ class CommentOverlayWindow(QWidget):
                 close_button_x + 6, close_button_y + self.close_button_size - 6
             )
 
-            minimize_button_x = self.width() - self.close_button_size - self.minimize_button_size - self.button_margin * 5
-            minimize_button_y = self.button_margin
-            if self.is_hovering_minimize:
-                painter.setPen(QPen(QColor(230, 230, 230, 200), 2))
-            else:
-                painter.setPen(QPen(QColor(230, 230, 230, 150), 2))
-            painter.drawLine(
-                minimize_button_x + 6, minimize_button_y + self.minimize_button_size // 2,
-                minimize_button_x + self.minimize_button_size - 6, minimize_button_y + self.minimize_button_size // 2
-            )
-
-            maximize_button_x = self.width() - self.close_button_size - self.minimize_button_size - self.maximize_button_size - self.button_margin * 7
+            maximize_button_x = self.width() - self.close_button_size - self.maximize_button_size - self.button_margin * 3
             maximize_button_y = self.button_margin
             if self.is_hovering_maximize:
                 painter.setPen(QPen(QColor(230, 230, 230, 200), 2))
@@ -1102,6 +1091,17 @@ class CommentOverlayWindow(QWidget):
             else:
                 # Draw maximize icon
                 painter.drawRect(maximize_button_x + 6, maximize_button_y + 6, 10, 10)
+
+            minimize_button_x = self.width() - self.close_button_size - self.maximize_button_size - self.minimize_button_size - self.button_margin * 5
+            minimize_button_y = self.button_margin
+            if self.is_hovering_minimize:
+                painter.setPen(QPen(QColor(230, 230, 230, 200), 2))
+            else:
+                painter.setPen(QPen(QColor(230, 230, 230, 150), 2))
+            painter.drawLine(
+                minimize_button_x + 6, minimize_button_y + self.minimize_button_size // 2,
+                minimize_button_x + self.minimize_button_size - 6, minimize_button_y + self.minimize_button_size // 2
+            )
 
             painter.setBrush(QBrush(QColor(0, 0, 0, 1)))
             painter.setPen(Qt.NoPen)
