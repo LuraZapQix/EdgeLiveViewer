@@ -289,6 +289,14 @@ class SettingsDialog(QDialog):
         self.watch_mainstream_check.setChecked(self.settings.get("watch_mainstream_thread", True))
         mainstream_form.addRow(self.watch_mainstream_check)
 
+        # ### ここからが追加箇所 ###
+        self.watch_delay_spin = QSpinBox()
+        self.watch_delay_spin.setRange(0, 120)  # 0秒から2分
+        self.watch_delay_spin.setValue(self.settings.get("watch_delay", 15)) # デフォルト15秒
+        self.watch_delay_spin.setSuffix("秒後から")
+        mainstream_form.addRow("監視開始遅延:", self.watch_delay_spin)
+        # ### ここまでが追加箇所 ###
+
         self.watch_duration_spin = QSpinBox()
         self.watch_duration_spin.setRange(10, 300)  # 10秒から5分
         self.watch_duration_spin.setValue(self.settings.get("watch_duration", 60))
@@ -535,6 +543,7 @@ class SettingsDialog(QDialog):
 
         # ### 機能追加: 本流スレ監視設定を保存 ###
         self.settings["watch_mainstream_thread"] = self.watch_mainstream_check.isChecked()
+        self.settings["watch_delay"] = self.watch_delay_spin.value() # ### 追加 ###
         self.settings["watch_duration"] = self.watch_duration_spin.value()
         self.settings["momentum_ratio"] = self.momentum_ratio_spin.value()
 
@@ -584,7 +593,7 @@ class SettingsDialog(QDialog):
                 "hide_anchor_comments": False, "hide_url_comments": False, "spacing": 30,
                 "ng_ids": [], "ng_names": [], "ng_texts": [], "display_images": True,
                 # ### 機能追加: 本流スレ監視設定をリセット ###
-                "watch_mainstream_thread": True, "watch_duration": 60, "momentum_ratio": 1.5
+                "watch_mainstream_thread": True, "watch_duration": 60, "watch_delay": 15, "momentum_ratio": 1.5
             }
             self.font_size_slider.setValue(self.settings["font_size"])
             self.font_weight_slider.setValue(self.settings["font_weight"])  # 修正: スライダーにリセット
@@ -622,6 +631,7 @@ class SettingsDialog(QDialog):
             self.display_images_checkbox.setChecked(self.settings["display_images"])  # 新しいチェックボックスをリセット
             # ### 機能追加: UIにリセット値を反映 ###
             self.watch_mainstream_check.setChecked(self.settings["watch_mainstream_thread"])
+            self.watch_delay_spin.setValue(self.settings["watch_delay"]) # ### 追加 ###
             self.watch_duration_spin.setValue(self.settings["watch_duration"])
             self.momentum_ratio_spin.setValue(self.settings["momentum_ratio"])
 

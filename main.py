@@ -1174,25 +1174,28 @@ class MainWindow(QMainWindow):
 
         # ### 機能追加: 設定が有効なら本流スレッドの監視を開始 ###
         if self.settings.get("watch_mainstream_thread", True):
+            # ### 修正箇所: 新しい設定値 `watch_delay` を読み込む ###
+            watch_delay = self.settings.get("watch_delay", 15)
             watch_duration = self.settings.get("watch_duration", 60)
             momentum_ratio = self.settings.get("momentum_ratio", 1.5)
             
             if self.mainstream_watcher and self.mainstream_watcher.isRunning():
                 self.mainstream_watcher.stop()
 
-            # ### 修正箇所: MainstreamWatcher に original_thread_id を渡す ###
             self.mainstream_watcher = MainstreamWatcher(
                 original_title=original_title_for_watcher,
                 original_thread_id=original_thread_id_for_watcher,
                 current_thread_id=next_thread_id,
                 watch_duration=watch_duration,
                 momentum_ratio=momentum_ratio,
+                grace_period=watch_delay, # ### `watch_delay` を `grace_period` として渡す ###
                 parent=self
             )
             self.mainstream_watcher.mainstream_thread_found.connect(self.on_mainstream_thread_found)
             self.mainstream_watcher.search_finished.connect(self.on_mainstream_watch_finished)
             self.mainstream_watcher.start()
-            self.statusBar().showMessage(f"次スレに接続しました。{watch_duration}秒間、本流スレッドを監視します...")
+            # ### 修正箇所: ステータスバーのメッセージを分かりやすく ###
+            self.statusBar().showMessage(f"次スレに接続。{watch_delay}秒後から{watch_duration}秒間、本流スレを監視します...")
         else:
             self.statusBar().showMessage(f"次スレ {next_thread_id} - {next_thread_title} に接続しました")
     
@@ -1265,6 +1268,7 @@ class MainWindow(QMainWindow):
             # ### 機能追加: 本流スレ監視設定のデフォルト値を追加 ###
             "watch_mainstream_thread": True,
             "watch_duration": 60,
+            "watch_delay": 15,
             "momentum_ratio": 1.5,
         }
         

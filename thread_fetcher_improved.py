@@ -331,7 +331,7 @@ class NextThreadFinder(QThread):
             self.search_finished.emit(False)
     
     def find_next_thread(self):
-        """次スレを検索するロジック（●がある場合はそれのみで判断、それ以外は従来のロジック）"""
+        """次スレを検索するロジック（●→通常ルール→反省会ルールの順で検索）"""
         try:
             url = "https://bbs.eddibb.cc/liveedge/subject.txt"
             response = requests.get(url, timeout=5)
@@ -339,92 +339,85 @@ class NextThreadFinder(QThread):
             
             lines = response.text.splitlines()
             
-            # 前スレが「●」で始まるかを判定
+            # --- 第1段階: 従来の強力な次スレ検索を実行 ---
+            
             starts_with_mark = self.thread_title.startswith('●')
             logger.info(f"現在のスレッド: {self.thread_title}, 前スレが「●」で始まるか: {starts_with_mark}")
             
-            # 候補スレッドを格納するリスト
             candidates = []
-            
             for line in lines:
-                if not line:
-                    continue
+                if not line: continue
                 thread_id_dat, title_res = line.split("<>", 1)
                 thread_id = thread_id_dat.replace(".dat", "")
-                title = html.unescape(title_res.split(" (")[0])  # HTMLエンティティをデコード
+                title = html.unescape(title_res.split(" (")[0])
                 
-                if thread_id == self.thread_id:
-                    continue
+                if thread_id == self.thread_id: continue
                 
-                # 前スレが「●」で始まる場合
                 if starts_with_mark:
                     if title.startswith('●'):
-                        candidates.append({
-                            "id": thread_id,
-                            "title": title
-                        })
-                # 前スレが「●」で始まらない場合
+                        candidates.append({"id": thread_id, "title": title})
                 else:
-                    # タイトルの類似度を計算
                     similarity = difflib.SequenceMatcher(None, self.thread_title, title).ratio()
-                    
-                    # 類似度が0.3以上の場合に候補として検討
                     if similarity >= 0.3:
                         next_number, _ = self.extract_last_number(title)
                         candidates.append({
-                            "id": thread_id,
-                            "title": title,
-                            "similarity": similarity,
-                            "number": next_number,
-                            "is_star": bool(re.search(r'★(\d+)$', title))
+                            "id": thread_id, "title": title, "similarity": similarity,
+                            "number": next_number, "is_star": bool(re.search(r'★(\d+)$', title))
                         })
             
             if not candidates:
                 logger.info("次スレ候補が見つかりませんでした")
                 return None
             
-            # 前スレが「●」で始まる場合
             if starts_with_mark:
-                # 「●」付きのスレッドから最初のものを選択
                 best_candidate = candidates[0]
                 logger.info(f"次スレを発見しました（●ルール）: {best_candidate['title']} (ID: {best_candidate['id']})")
-                return {
-                    "id": best_candidate["id"],
-                    "title": best_candidate["title"]
-                }
-            # 前スレが「●」で始まらない場合
+                return {"id": best_candidate["id"], "title": best_candidate["title"]}
             else:
-                # 次スレの期待される数字を計算
                 current_number, has_number = self.extract_last_number(self.thread_title)
-                expected_numbers = []
-                if not has_number:
-                    expected_numbers = [2]  # 数字がない場合、次スレは「2」を想定
-                else:
-                    expected_numbers = [current_number + 1, current_number]  # +1または同値を許容
+                expected_numbers = [current_number + 1, current_number] if has_number else [2]
                 
-                # 候補から次スレを選択
                 valid_candidates = []
                 for candidate in candidates:
                     next_num = candidate["number"]
-                    if next_num in expected_numbers:
+                    if next_num in expected_numbers or \
+                       (candidate["is_star"] and next_num in [1, 2]) or \
+                       (not has_number and next_num == 2 and re.search(r'(★2|Part\.2|Part2)', candidate["title"])):
                         valid_candidates.append(candidate)
-                    elif candidate["is_star"] and next_num in [1, 2]:
-                        valid_candidates.append(candidate)
-                    elif not has_number and next_num == 2:
-                        if re.search(r'(★2|Part\.2|Part2)(?:\s+.*)?$', candidate["title"]):
-                            valid_candidates.append(candidate)
                 
-                if not valid_candidates:
-                    logger.info(f"期待される数字 {expected_numbers} または次スレパターンに一致するスレッドが見つかりませんでした")
-                    return None
-                
-                # 最も類似度が高い候補を選択
-                best_candidate = max(valid_candidates, key=lambda c: c["similarity"])
-                logger.info(f"次スレを発見しました: {best_candidate['title']} (ID: {best_candidate['id']}, 類似度: {best_candidate['similarity']:.2f})")
+                if valid_candidates:
+                    # ### 変更点1: ここで処理を終えず、見つかった場合はそのまま返す ###
+                    best_candidate = max(valid_candidates, key=lambda c: c["similarity"])
+                    logger.info(f"次スレを発見しました（通常ルール）: {best_candidate['title']} (ID: {best_candidate['id']}, 類似度: {best_candidate['similarity']:.2f})")
+                    return {"id": best_candidate["id"], "title": best_candidate["title"]}
+
+            # ### 変更点2: ここからが「反省会」用のフォールバック検索 ###
+            # 上記の valid_candidates が空だった場合に、この処理が実行される
+            
+            logger.info("通常の次スレが見つからなかったため、『反省会』スレッドのフォールバック検索を実行します。")
+            
+            reflection_candidates = []
+            # all_threadsの情報は既にcandidatesに入っているので、再利用する
+            for candidate in candidates: 
+                # 条件1: タイトルに「反省会」が含まれているか
+                if "反省会" in candidate["title"]:
+                    # 条件2: 元スレタイとの類似度が0.6以上か
+                    if candidate["similarity"] >= 0.6:
+                        reflection_candidates.append(candidate)
+                        logger.debug(f"反省会候補: {candidate['title']} (類似度: {candidate['similarity']:.2f})")
+
+            if reflection_candidates:
+                # 複数の反省会候補が見つかった場合、最も類似度の高いものを選択
+                best_reflection_candidate = max(reflection_candidates, key=lambda c: c['similarity'])
+                logger.info(f"次スレを発見しました（反省会ルール）: {best_reflection_candidate['title']}")
                 return {
-                    "id": best_candidate["id"],
-                    "title": best_candidate["title"]
+                    "id": best_reflection_candidate["id"],
+                    "title": best_reflection_candidate["title"]
                 }
+            
+            # ### 変更点3: すべての検索で何も見つからなかった場合に、最終的にNoneを返す ###
+            logger.info("すべての検索ルールで次スレを見つけることができませんでした。")
+            return None
         
         except requests.RequestException as e:
             logger.error(f"subject.txt の取得に失敗しました: {str(e)}")
@@ -463,25 +456,43 @@ class MainstreamWatcher(QThread):
     mainstream_thread_found = pyqtSignal(dict)
     search_finished = pyqtSignal()
 
-    def __init__(self, original_title, original_thread_id, current_thread_id, watch_duration=60, momentum_ratio=1.5, min_res=10, parent=None):
+    # ### 修正箇所: grace_period (猶予期間) をコンストラクタに追加 ###
+    def __init__(self, original_title, original_thread_id, current_thread_id, 
+                 watch_duration=60, momentum_ratio=1.5, min_res=10, 
+                 grace_period=15, parent=None):
         super().__init__(parent)
         self.original_title = original_title
-        self.original_thread_id = original_thread_id # 埋まったスレッドのIDを保持
+        self.original_thread_id = original_thread_id
         self.current_thread_id = current_thread_id
         self.watch_duration = watch_duration
         self.momentum_ratio = momentum_ratio
         self.min_res = min_res
+        self.grace_period = grace_period # 猶予期間をプロパティとして保持
         self.running = True
         self.base_url = "https://bbs.eddibb.cc/liveedge"
 
-    # ### 修正箇所: ここからが新しいロジック ###
     def run(self):
         start_time = time.time()
-        logger.info(f"本流スレッドの監視を開始します (軽量モード)。監視時間: {self.watch_duration}秒")
+        # ### 修正箇所: ログメッセージを分かりやすく ###
+        logger.info(f"本流スレッドの監視を開始します。{self.grace_period}秒後に比較を開始し、その後{self.watch_duration}秒間監視します。")
 
-        while self.running and (time.time() - start_time) < self.watch_duration:
+        # ### 修正箇所: 監視ループの条件を変更 ###
+        # ループ全体の時間は「猶予期間＋監視時間」になる
+        total_watch_time = self.grace_period + self.watch_duration
+        
+        while self.running and (time.time() - start_time) < total_watch_time:
             try:
-                # 1. subject.txt から全スレッドの基本情報を取得 (通信1回)
+                # ### 猶予期間（Grace Period）のロジック ###
+                elapsed_time = time.time() - start_time
+                if elapsed_time < self.grace_period:
+                    logger.info(f"監視開始まで待機中... 残り約{self.grace_period - elapsed_time:.0f}秒")
+                    time.sleep(5)  # 5秒待機して次のチェックへ
+                    continue # ループの先頭に戻る
+
+                # --- ここから下は猶予期間が終了した後の処理 ---
+                logger.info(f"勢いの比較を開始しました。監視終了まで残り約{total_watch_time - elapsed_time:.0f}秒")
+                
+                # 1. subject.txt から全スレッドの基本情報を取得
                 all_threads = self.fetch_threads_basic_info()
                 if not all_threads or not self.running: break
 
@@ -491,15 +502,15 @@ class MainstreamWatcher(QThread):
                     logger.warning(f"現在接続中のスレッド {self.current_thread_id} が一覧に見つかりません。監視を中止します。")
                     break
                 
-                # 3. 事前フィルタリングで候補を高速に絞り込む (通信なし)
+                # 3. 事前フィルタリングで候補を高速に絞り込む
                 candidate_threads = self.filter_candidates(all_threads)
 
-                # 4. 絞り込んだ候補と現在スレッドの勢いを計算 (通信は候補数+1回のみ)
+                # 4. 絞り込んだ候補と現在スレッドの勢いを計算
                 threads_to_fetch_momentum = [current_thread] + candidate_threads
                 self.calculate_momentum_for_list(threads_to_fetch_momentum)
                 
                 current_momentum = int(current_thread.get('momentum', '0').replace(',', ''))
-                if current_momentum == 0: # 勢いがない場合は比較不能
+                if current_momentum == 0: 
                     time.sleep(5)
                     continue
 
@@ -543,19 +554,85 @@ class MainstreamWatcher(QThread):
         except Exception:
             return []
 
+    # ### 修正箇所3: filter_candidatesメソッドをNextThreadFinderのロジックで全面刷新 ###
     def filter_candidates(self, all_threads):
-        """通信なしで、本流の可能性があるスレッドを絞り込む"""
-        candidates = []
+        """
+        NextThreadFinderの判定ロジックを完全に模倣し、本流の可能性がある候補を絞り込む
+        """
+        # 1. ●ルールのチェック
+        starts_with_mark = self.original_title.startswith('●')
+        
+        if starts_with_mark:
+            logger.debug("本流監視: ●ルールを適用します")
+            candidates = []
+            for thread in all_threads:
+                if thread['id'] == self.current_thread_id or thread['id'] == self.original_thread_id:
+                    continue
+                if thread['title'].startswith('●'):
+                    candidates.append(thread)
+            return candidates
+
+        # 2. 通常ルールの適用
+        # a. 期待される次スレの番号を計算
+        current_number, has_number = self.extract_last_number(self.original_title)
+        expected_numbers = []
+        if not has_number:
+            expected_numbers = [2]
+        else:
+            expected_numbers = [current_number + 1, current_number]
+        
+        logger.debug(f"本流監視: 元スレ='{self.original_title}', 期待される番号={expected_numbers}")
+
+        # b. 候補の選別
+        valid_candidates = []
         for thread in all_threads:
-            # ### 修正箇所2: 自分自身と「埋まったスレッド」を候補から除外 ###
+            # 基本的な除外条件
             if thread['id'] == self.current_thread_id: continue
             if thread['id'] == self.original_thread_id: continue
             if int(thread['res_count']) >= 1000: continue
             if int(thread['res_count']) < self.min_res: continue
-            if difflib.SequenceMatcher(None, self.original_title, thread['title']).ratio() < 0.6: continue
-            candidates.append(thread)
-        return candidates
+
+            # タイトル類似度が低すぎるものは、番号チェックの前に除外
+            similarity = difflib.SequenceMatcher(None, self.original_title, thread['title']).ratio()
+            if similarity < 0.3:
+                continue
+
+            # 候補スレの番号が期待値と一致するかチェック
+            next_num, _ = self.extract_last_number(thread['title'])
+            is_star = bool(re.search(r'★(\d+)$', thread['title']))
+
+            if next_num in expected_numbers:
+                valid_candidates.append(thread)
+            elif is_star and next_num in [1, 2]:
+                valid_candidates.append(thread)
+            elif not has_number and next_num == 2:
+                if re.search(r'(★2|Part\.2|Part2)(?:\s+.*)?$', thread['title']):
+                    valid_candidates.append(thread)
         
+        if valid_candidates:
+            logger.debug(f"本流監視: {len(valid_candidates)}件の候補を発見しました")
+        
+        return valid_candidates
+        
+    # ### 追加4: NextThreadFinderからロジックを移植 ###
+    def extract_last_number(self, title):
+        """タイトルから末尾に最も近いスレッド進行に関連する数字を抽出"""
+        star_match = re.search(r'★(\d+)$', title)
+        part_dot_match = re.search(r'Part\.(\d+)$', title)
+        part_match = re.search(r'Part(\d+)$', title)
+        
+        if star_match:
+            return float(star_match.group(1)), True
+        elif part_dot_match:
+            return float(part_dot_match.group(1)), True
+        elif part_match:
+            return float(part_match.group(1)), True
+        
+        number_match = re.findall(r'(\d*\.\d+|\d+)', title)
+        if number_match:
+            return float(number_match[-1]), True
+        return 0, False
+
     def calculate_momentum_for_list(self, thread_list):
         """指定されたスレッドのリストに対してのみ、勢いを計算する"""
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -589,7 +666,6 @@ class MainstreamWatcher(QThread):
     def stop(self):
         logger.info(f"MainstreamWatcher {self.original_title} の停止をリクエスト")
         self.running = False
-    # ### ここまでが修正分 ###
     
 if __name__ == "__main__":
     import sys
