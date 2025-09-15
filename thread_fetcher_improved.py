@@ -31,7 +31,8 @@ class ThreadFetcher(QThread):
             threads = self.fetch_threads()
             logger.info(f"取得したスレッド数: {len(threads)}, 所要時間: {time.time() - start_time:.2f}秒")
             if self.sort_by == "momentum":
-                threads.sort(key=lambda x: int(x.get('momentum', '0').replace(',', '')), reverse=True)
+                # 修正: 'momentum'キーは既に数値なので、int()変換は不要
+                threads.sort(key=lambda x: x.get('momentum', 0), reverse=True)
                 logger.info("勢い順にソートしました")
             elif self.sort_by == "date":
                 threads.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
@@ -42,88 +43,77 @@ class ThreadFetcher(QThread):
             logger.error(f"スレッド一覧の取得に失敗しました: {str(e)}")
             self.error_occurred.emit(f"スレッド一覧の取得に失敗しました: {str(e)}")
     
-    def fetch_dat(self, thread_id):
-        """個別の .dat ファイルから作成日時を取得"""
-        try:
-            dat_url = f"{self.base_url}/dat/{thread_id}.dat"
-            response = requests.get(dat_url, timeout=0.5)
-            response.raise_for_status()
-            first_line = response.text.split('\n')[0]
-            date_match = re.search(r'(\d{4}/\d{2}/\d{2}).*?(\d{2}:\d{2}:\d{2})', first_line)
-            
-            timestamp = 0
-            date_str = ""
-            if date_match:
-                date_str = f"{date_match.group(1)} {date_match.group(2)}"
-                dt = datetime.strptime(date_str, '%Y/%m/%d %H:%M:%S')
-                timestamp = dt.timestamp()
-            return timestamp, date_str
-        except Exception as e:
-            logger.warning(f"スレッド {thread_id} のDAT取得に失敗: {str(e)}")
-            return 0, ""
-    
+    # 削除: このメソッドは不要になりました
+    # def fetch_dat(self, thread_id):
+    #     ...
+
     def fetch_threads(self):
         subject_url = f"{self.base_url}/subject.txt"
-        subject_response = requests.get(subject_url, timeout=0.5)
+        subject_response = requests.get(subject_url, timeout=5) # タイムアウトを少し延長
         subject_response.raise_for_status()
         
         subject_lines = subject_response.text.splitlines()
         threads = []
         
+        current_timestamp = time.time()
+
         for line in subject_lines:
             if not line:
                 continue
             try:
                 thread_id_dat, title_res = line.split("<>", 1)
                 thread_id = thread_id_dat.replace(".dat", "")
-                # 修正: 最後の括弧内の数字をレス数として扱うように正規表現を変更
+                
                 title_res_match = re.search(r'(.*)\s*\((\d+)\)$', title_res)
                 if not title_res_match:
                     continue
                 
-                title = html.unescape(title_res_match.group(1).strip())  # HTMLエンティティをデコード
-                res_count = title_res_match.group(2)
+                title = html.unescape(title_res_match.group(1).strip())
+                res_count_str = title_res_match.group(2)
+                res_count = int(res_count_str)
                 
+                # --- ここからが修正箇所 ---
+                
+                # 1. スレッドIDをUNIXタイムスタンプとして直接利用
+                timestamp = int(thread_id)
+                
+                # 2. タイムスタンプから表示用の日付文字列を生成
+                dt_object = datetime.fromtimestamp(timestamp)
+                date_str = dt_object.strftime('%Y/%m/%d %H:%M:%S')
+                
+                # 3. 勢いを計算
+                time_diff = current_timestamp - timestamp
+                momentum = 0
+                if time_diff > 0:
+                    momentum = int(res_count / time_diff * 86400)
+
                 threads.append({
                     'id': thread_id,
                     'title': title,
-                    'res_count': res_count
+                    'res_count': res_count_str,
+                    'timestamp': timestamp,
+                    'date': date_str,
+                    # 修正: 勢いは数値で保持し、表示時にカンマ区切りにする
+                    'momentum': momentum
                 })
+                # --- 修正ここまで ---
+
             except Exception as e:
-                logger.warning(f"subject.txt の解析に失敗しました: {str(e)}")
+                logger.warning(f"subject.txt の解析に失敗しました: {str(e)} - Line: {line}")
                 continue
         
         logger.info(f"subject.txt から取得したスレッド数: {len(threads)}")
         
-        with ThreadPoolExecutor(max_workers=200) as executor:
-            future_to_thread = {executor.submit(self.fetch_dat, thread['id']): thread for thread in threads}
-            for future in future_to_thread:
-                thread = future_to_thread[future]
-                try:
-                    timestamp, date_str = future.result()
-                    thread['timestamp'] = timestamp
-                    thread['date'] = date_str
-                    
-                    momentum = "0"
-                    if timestamp > 0:
-                        time_diff = time.time() - timestamp
-                        if time_diff > 0:
-                            momentum_value = int(float(thread['res_count']) / time_diff * 86400)
-                            momentum = f"{momentum_value:,}"
-                    thread['momentum'] = momentum
-                except Exception as e:
-                    logger.warning(f"スレッド {thread['id']} の処理に失敗: {str(e)}")
-                    thread['timestamp'] = 0
-                    thread['date'] = ""
-                    thread['momentum'] = "0"
+        # 削除: ThreadPoolExecutorを使った個別datファイルの取得処理はすべて不要
+        # with ThreadPoolExecutor(max_workers=200) as executor:
+        #     ...
         
         return threads
     
     def stop(self):
-        # ### 修正: self.wait() を削除 ###
         logger.info("ThreadFetcher の停止をリクエスト")
         self.running = False
-
+        
 from datetime import datetime
 import time
 import re

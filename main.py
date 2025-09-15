@@ -301,6 +301,7 @@ class MainWindow(QMainWindow):
         self.load_auth_token()
         self.write_widget = None
         self.is_docked = True
+        self.refresh_timer = QTimer(self)
         self.init_ui()
         
         app = QApplication.instance()
@@ -316,6 +317,12 @@ class MainWindow(QMainWindow):
         self.my_comments = {}  
         self.current_thread_id = None
         self.detail_table.doubleClicked.connect(self.start_playback_from_comment)
+
+        # --- 追加: タイマーの設定と開始 ---
+        self.refresh_timer.timeout.connect(self.refresh_thread_list)
+        if self.auto_refresh_check.isChecked():
+            self.refresh_timer.start(30000)  # 30秒 = 30000ミリ秒
+        # --- 追加ここまで ---
 
     def init_ui(self):
         central_widget = QWidget()
@@ -346,23 +353,38 @@ class MainWindow(QMainWindow):
         self.sort_combo.addItem("新着順", "date")
         self.sort_combo.currentIndexChanged.connect(self.change_sort_order)
         sort_layout.addWidget(self.sort_combo)
+        
+        # --- ここからレイアウトの修正 ---
+        
+        # 更新ボタンを先に定義しておく
         refresh_button = QPushButton("更新")
         refresh_button.clicked.connect(self.refresh_thread_list)
+        
+        # スペーサー（addStretch）を先に追加して、これ以降のウィジェットを右詰にする
         sort_layout.addStretch()
+        
+        # 自動更新チェックボックスを作成し、スペーサーの後に追加する
+        self.auto_refresh_check = QCheckBox("自動更新 (30秒)")
+        self.auto_refresh_check.setChecked(True) # デフォルトでON
+        self.auto_refresh_check.stateChanged.connect(self.toggle_auto_refresh)
+        sort_layout.addWidget(self.auto_refresh_check)
+        
+        # 最後に更新ボタンを配置する
         sort_layout.addWidget(refresh_button)
+
+        # --- 修正ここまで ---
         thread_layout.addLayout(sort_layout)
         
         self.thread_table = QTableWidget(0, 4)
         self.thread_table.setHorizontalHeaderLabels(["スレッドタイトル", "レス数", "勢い", "作成日時"])
-        self.thread_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)  # スレッドタイトルは伸縮可能
+        self.thread_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.thread_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.thread_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.thread_table.doubleClicked.connect(self.thread_selected)
         
-        # 列幅を設定
-        self.thread_table.setColumnWidth(1, 60)   # レス数: 60px
-        self.thread_table.setColumnWidth(2, 60)   # 勢い: 60px
-        self.thread_table.setColumnWidth(3, 80)  # 作成日時: 80px
+        self.thread_table.setColumnWidth(1, 60)
+        self.thread_table.setColumnWidth(2, 60)
+        self.thread_table.setColumnWidth(3, 80)
         
         thread_layout.addWidget(self.thread_table)
         self.tab_widget.addTab(thread_tab, "スレッド一覧")
@@ -375,22 +397,20 @@ class MainWindow(QMainWindow):
         self.thread_title_label.setAlignment(Qt.AlignCenter)
         self.detail_layout.addWidget(self.thread_title_label)
         
-        # 列数を5に変更し、「投稿日時」を追加
         self.detail_table = QTableWidget(0, 5)
         self.detail_table.setHorizontalHeaderLabels(["番号", "本文", "名前", "ID", "投稿日時"])
-        self.detail_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # 本文を伸縮
+        self.detail_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.detail_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.detail_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.detail_table.verticalHeader().setVisible(False)
-        self.detail_table.setColumnWidth(0, 40)   # 番号
-        self.detail_table.setColumnWidth(2, 80)  # 名前
-        self.detail_table.setColumnWidth(3, 80)  # ID
-        self.detail_table.setColumnWidth(4, 100)  # 投稿日時（幅を適宜設定）
+        self.detail_table.setColumnWidth(0, 40)
+        self.detail_table.setColumnWidth(2, 80)
+        self.detail_table.setColumnWidth(3, 80)
+        self.detail_table.setColumnWidth(4, 100)
         self.detail_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.detail_table.customContextMenuRequested.connect(self.show_context_menu)
         self.detail_layout.addWidget(self.detail_table)
         
-        # 書き込みウィジェット
         self.write_widget = WriteWidget(self)
         self.write_widget.post_button.clicked.connect(self.post_comment)
         self.write_widget.comment_input.returnPressed.connect(self.post_comment)
@@ -410,6 +430,40 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(button_layout)
         
         self.statusBar().showMessage("準備完了")
+
+    # --- 追加: 自動更新のON/OFFを切り替えるメソッド ---
+    def toggle_auto_refresh(self, state):
+        if state == Qt.Checked:
+            self.refresh_timer.start(30000)
+            self.statusBar().showMessage("スレッド一覧の自動更新を開始しました。")
+            logger.info("スレッド一覧の自動更新を開始しました。")
+        else:
+            self.refresh_timer.stop()
+            self.statusBar().showMessage("スレッド一覧の自動更新を停止しました。")
+            logger.info("スレッド一覧の自動更新を停止しました。")
+    # --- 追加ここまで ---
+
+    def update_thread_list(self, threads):
+        # 以前の修正を反映したバージョン
+        self.thread_table.setRowCount(0)
+        
+        for thread in threads:
+            row = self.thread_table.rowCount()
+            self.thread_table.insertRow(row)
+            
+            self.thread_table.setItem(row, 0, QTableWidgetItem(thread["title"]))
+            self.thread_table.setItem(row, 1, QTableWidgetItem(thread["res_count"]))
+            
+            momentum_str = f"{thread['momentum']:,}"
+            self.thread_table.setItem(row, 2, QTableWidgetItem(momentum_str))
+            
+            self.thread_table.setItem(row, 3, QTableWidgetItem(thread["date"]))
+            
+            self.thread_table.item(row, 0).setData(Qt.UserRole, thread["id"])
+        
+        # 自動更新時にはステータスメッセージを上書きしないように配慮
+        if not self.refresh_timer.isActive() or not self.auto_refresh_check.isChecked():
+             self.statusBar().showMessage(f"スレッド一覧を更新しました（{len(threads)}件）")
 
     def start_playback_from_comment(self):
         """スレッド詳細画面のレスをダブルクリックして再生開始"""
@@ -951,22 +1005,6 @@ class MainWindow(QMainWindow):
         
         logger.info(f"過去ログの全コメントを表示しました: {len(comments)}件")
         self.statusBar().showMessage(f"過去ログ {self.current_thread_id} の全コメント（{len(comments)}件）を表示しました")
-
-    def update_thread_list(self, threads):
-        self.thread_table.setRowCount(0)
-        
-        for thread in threads:
-            row = self.thread_table.rowCount()
-            self.thread_table.insertRow(row)
-            
-            self.thread_table.setItem(row, 0, QTableWidgetItem(thread["title"]))
-            self.thread_table.setItem(row, 1, QTableWidgetItem(thread["res_count"]))
-            self.thread_table.setItem(row, 2, QTableWidgetItem(thread["momentum"]))
-            self.thread_table.setItem(row, 3, QTableWidgetItem(thread["date"]))
-            
-            self.thread_table.item(row, 0).setData(Qt.UserRole, thread["id"])
-        
-        self.statusBar().showMessage(f"スレッド一覧を更新しました（{len(threads)}件）")
     
     def change_sort_order(self):
         if self.thread_fetcher is not None:
