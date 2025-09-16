@@ -365,8 +365,25 @@ class NextThreadFinder(QThread):
                 return {"id": best_candidate["id"], "title": best_candidate["title"]}
             else:
                 current_number, has_number = self.extract_last_number(self.thread_title)
-                expected_numbers = [current_number + 1, current_number] if has_number else [2]
+                # --- ここからが修正箇所 ---
                 
+                if has_number:
+                    # 範囲を定義します（この数値を変更することで範囲を調整できます）
+                    LOWER_BOUND_OFFSET = 2  # 現在の番号からいくつ下まで許容するか (5 - 2 = 3)
+                    UPPER_BOUND_OFFSET = 3  # 現在の番号からいくつ上まで許容するか (5 + 3 = 8)
+                    
+                    # 開始番号を計算（ただし1未満にはならないようにする）
+                    start_num = max(1, int(current_number) - LOWER_BOUND_OFFSET)
+                    # 終了番号を計算
+                    end_num = int(current_number) + UPPER_BOUND_OFFSET
+                    
+                    # 期待する番号のリストを範囲で生成
+                    expected_numbers = list(range(start_num, end_num + 1))
+                else:
+                    # 元スレに番号がない場合は、1スレ目や2スレ目を候補とする
+                    expected_numbers = [1, 2]
+
+                # --- 修正箇所はここまで ---                
                 valid_candidates = []
                 for candidate in candidates:
                     next_num = candidate["number"]
