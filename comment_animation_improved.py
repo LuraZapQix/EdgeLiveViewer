@@ -17,7 +17,19 @@ from queue import Queue, Empty
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', force=True)
 logger = logging.getLogger('CommentOverlayWindow')
 
-# comment_animation_improved.py にある ImageLoaderThread クラスを以下に置き換える
+class CommentObject:
+    """コメントデータを保持するための軽量クラス"""
+    __slots__ = [
+        'id', 'text', 'x', 'y', 'width', 'height', 'row', 
+        'creation_time', 'speed', 'number', 'is_system', 'pixmap'
+    ]
+
+    def __init__(self, **kwargs):
+        # is_systemのデフォルト値を設定
+        self.is_system = False
+        # kwargsで渡された属性をセット
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 class ImageLoaderThread(QThread):
     """画像読み込み用のスレッド"""
@@ -363,7 +375,6 @@ class CommentOverlayWindow(QWidget):
         else:
             logger.info("キューが空に。次のバッチを待機")
             
-    # ★★★【修正】add_system_messageでPixmapを生成するように変更 ★★★
     def add_system_message(self, message, message_type="generic"):
         font = QFont(self.font_family)
         font.setPointSize(self.font_size)
@@ -392,19 +403,19 @@ class CommentOverlayWindow(QWidget):
             self.font_shadow, self.font_shadow_directions
         )
         
-        comment_obj = {
-            'id': comment_id,
-            'text': message,
-            'x': float(self.width()),
-            'y': y_position,
-            'width': text_width, # 枠線描画用にテキスト自体の幅を保持
-            'height': line_height, # 枠線描画用に高さを保持
-            'row': row,
-            'creation_time': QApplication.instance().property("comment_time") or 0,
-            'speed': speed,
-            'is_system': True,
-            'pixmap': comment_pixmap # 生成したPixmapを保存
-        }
+        comment_obj = CommentObject(
+            id=comment_id,
+            text=message,
+            x=float(self.width()),
+            y=y_position,
+            width=text_width,
+            height=line_height,
+            row=row,
+            creation_time=QApplication.instance().property("comment_time") or 0,
+            speed=speed,
+            is_system=True,
+            pixmap=comment_pixmap
+        )
         
         self.comments.append(comment_obj)
         self.row_usage[row] = comment_obj
@@ -601,12 +612,12 @@ class CommentOverlayWindow(QWidget):
         self.update()
 
     def _check_collision(self, speed_new, existing_comment):
-        # (このメソッドは変更なし)
         if not existing_comment:
             return True
 
-        right_edge = existing_comment['x'] + existing_comment['width']
-        current_speed = existing_comment['speed']
+        # ★★★ 変更点 ★★★
+        right_edge = existing_comment.x + existing_comment.width
+        current_speed = existing_comment.speed
         gap = self.width() - right_edge
 
         if gap < 120:
@@ -621,7 +632,6 @@ class CommentOverlayWindow(QWidget):
         return True
 
     def find_available_row(self, comment_width):
-        # (このメソッドは変更なし)
         speed_new = (self.width() + comment_width) / self.comment_speed
 
         available_rows = []
@@ -649,10 +659,10 @@ class CommentOverlayWindow(QWidget):
                     return r + random_offset
 
         if self.row_usage:
-            return min(self.row_usage.keys(), key=lambda k: self.row_usage[k]['x'] + self.row_usage[k]['width'])
+            return min(self.row_usage.keys(), key=lambda k: self.row_usage[k].x + self.row_usage[k].width)
         
         return 0
-    # ... (extract_image_urlからupdate_commentsまでのメソッドは変更なし) ...
+    
     def extract_image_url(self, text):
         image_extensions = r'\.(jpg|jpeg|png|gif|webp)'
         
@@ -829,19 +839,21 @@ class CommentOverlayWindow(QWidget):
         
         processed_ids = set()
         for comment in self.comments[:]:
-            if comment['id'] in processed_ids:
+            # ★★★ 変更点 ★★★
+            if comment.id in processed_ids:
                 continue
-            processed_ids.add(comment['id'])
+            processed_ids.add(comment.id)
             
-            elapsed = current_time - comment['creation_time']
-            comment['x'] -= comment['speed'] * (8 / 1000.0)
-            if comment['x'] < -comment['pixmap'].width(): # Pixmapの幅で判定
-                to_remove.append(comment['id'])
+            elapsed = current_time - comment.creation_time
+            comment.x -= comment.speed * (8 / 1000.0)
+            if comment.x < -comment.pixmap.width():
+                to_remove.append(comment.id)
         
         for comment_id in to_remove:
-            self.comments = [c for c in self.comments if c['id'] != comment_id]
+            # ★★★ 変更点 ★★★
+            self.comments = [c for c in self.comments if c.id != comment_id]
             for row, comment in list(self.row_usage.items()):
-                if comment['id'] == comment_id:
+                if comment.id == comment_id:
                     del self.row_usage[row]
                     break
 
@@ -927,22 +939,23 @@ class CommentOverlayWindow(QWidget):
         total_distance = self.width() + text_width
         speed = total_distance / self.comment_speed
         
-        comment_obj = {
-            'id': comment_id,
-            'text': display_text, # textはアンカー判定などのために残す
-            'x': float(self.width()),
-            'y': y_position,
-            'width': text_width,
-            'height': line_height,
-            'row': row,
-            'creation_time': QApplication.instance().property("comment_time") or 0,
-            'speed': speed,
-            'number': comment.get('number', 0),
-            'pixmap': comment_pixmap # 生成したPixmapを保存
-        }
+        comment_obj = CommentObject(
+            id=comment_id,
+            text=display_text,
+            x=float(self.width()),
+            y=y_position,
+            width=text_width,
+            height=line_height,
+            row=row,
+            creation_time=QApplication.instance().property("comment_time") or 0,
+            speed=speed,
+            number=comment.get('number', 0),
+            pixmap=comment_pixmap
+        )
         self.comments.append(comment_obj)
         self.row_usage[row] = comment_obj
-        logger.info(f"コメント追加: 番号={comment_obj['number']}, テキスト={display_text}, 元テキスト={text}, ID={comment_id}")
+        # ★★★ 変更点: ['number'] を .number に修正 ★★★
+        logger.info(f"コメント追加: 番号={comment_obj.number}, テキスト={display_text}, 元テキスト={text}, ID={comment_id}")
         self.update()
 
     def update_settings(self, settings):
@@ -973,8 +986,9 @@ class CommentOverlayWindow(QWidget):
         
         self.calculate_comment_rows()
         for comment in self.comments:
-            total_distance = self.width() + comment['width']
-            comment['speed'] = total_distance / self.comment_speed
+            # ★★★ 変更点: ['key'] を .key に修正 ★★★
+            total_distance = self.width() + comment.width
+            comment.speed = total_distance / self.comment_speed
         
         for image_id, pos in self.image_positions.items():
             total_distance = self.width() + pos['width']
@@ -984,15 +998,15 @@ class CommentOverlayWindow(QWidget):
         self.update()
 
     def remove_oldest_comment(self):
-        # (このメソッドは変更なし)
         if not self.comments:
             return
         
-        oldest_comment = min(self.comments, key=lambda c: c['creation_time'])
-        logger.info(f"上限超過で削除: ID={oldest_comment['id']}, x={oldest_comment['x']:.1f}, text={oldest_comment['text']}")
+        # ★★★ 変更点 ★★★
+        oldest_comment = min(self.comments, key=lambda c: c.creation_time)
+        logger.info(f"上限超過で削除: ID={oldest_comment.id}, x={oldest_comment.x:.1f}, text={oldest_comment.text}")
         self.comments.remove(oldest_comment)
-        if oldest_comment['row'] in self.row_usage:
-            self.row_usage.pop(oldest_comment['row'])
+        if oldest_comment.row in self.row_usage:
+            self.row_usage.pop(oldest_comment.row)
 
     # ★★★【修正】paintEventをPixmap描画ベースに全面的に書き換え ★★★
     def paintEvent(self, event):
@@ -1054,45 +1068,45 @@ class CommentOverlayWindow(QWidget):
 
         # --- コメントの描画 (Pixmapベースに書き換え) ---
         for comment in self.comments:
-            pixmap = comment.get('pixmap')
-            if not pixmap or comment['x'] + pixmap.width() < 0 or comment['x'] > self.width():
+            # ★★★ 変更点: getattrを使用し、より安全に属性にアクセス ★★★
+            pixmap = getattr(comment, 'pixmap', None)
+            if not pixmap or comment.x + pixmap.width() < 0 or comment.x > self.width():
                 continue
 
             # 枠線や背景の描画ロジックは維持
-            is_system = comment.get('is_system', False)
+            is_system = getattr(comment, 'is_system', False)
             is_my_comment = False
             is_anchored_to_my_comment = False
 
-            if not is_system and 'number' in comment:
-                is_my_comment = comment['number'] in self.my_comment_numbers
+            if not is_system:
+                is_my_comment = comment.number in self.my_comment_numbers
                 if not is_my_comment:
-                    anchor_matches = re.findall(r'>>([0-9]+)', comment['text'])
+                    anchor_matches = re.findall(r'>>([0-9]+)', comment.text)
                     for anchor in anchor_matches:
                         if int(anchor) in self.my_comment_numbers:
                             is_anchored_to_my_comment = True
                             break
             
-            # 枠線/背景の描画
+            # 枠線/背景の描画 (★★★ 変更点 ★★★)
             if is_system:
                 painter.setBrush(QBrush(QColor(255, 255, 0, 70)))
                 painter.setPen(Qt.NoPen)
-                painter.drawRect(int(comment['x']) - 5, int(comment['y']) - font_metrics.ascent() - 5,
-                                comment['width'] + 10, comment['height'] + 10)
+                painter.drawRect(int(comment.x) - 5, int(comment.y) - font_metrics.ascent() - 5,
+                                comment.width + 10, comment.height + 10)
             elif is_my_comment:
                 painter.setBrush(Qt.NoBrush)
                 painter.setPen(QPen(QColor(255, 255, 0, 255), 3))
-                painter.drawRect(int(comment['x']) - 5, int(comment['y']) - font_metrics.ascent() - 5,
-                                comment['width'] + 10, comment['height'] + 10)
+                painter.drawRect(int(comment.x) - 5, int(comment.y) - font_metrics.ascent() - 5,
+                                comment.width + 10, comment.height + 10)
             elif is_anchored_to_my_comment:
                 painter.setBrush(Qt.NoBrush)
                 painter.setPen(QPen(QColor(255, 0, 0, 255), 3))
-                painter.drawRect(int(comment['x']) - 5, int(comment['y']) - font_metrics.ascent() - 5,
-                                comment['width'] + 10, comment['height'] + 10)
+                painter.drawRect(int(comment.x) - 5, int(comment.y) - font_metrics.ascent() - 5,
+                                comment.width + 10, comment.height + 10)
             
-            # Pixmapを描画 (テキスト描画よりもはるかに高速)
-            # Y座標は、テキストのベースラインとPixmapの左上との差分(ascent)を補正する
-            draw_y = comment['y'] - font_metrics.ascent() - self.font_shadow
-            painter.drawPixmap(int(comment['x']), int(draw_y), pixmap)
+            # Pixmapを描画 (★★★ 変更点 ★★★)
+            draw_y = comment.y - font_metrics.ascent() - self.font_shadow
+            painter.drawPixmap(int(comment.x), int(draw_y), pixmap)
             
 if __name__ == "__main__":
     import time
