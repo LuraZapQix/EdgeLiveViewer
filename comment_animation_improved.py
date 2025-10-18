@@ -17,9 +17,13 @@ from queue import Queue, Empty
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', force=True)
 logger = logging.getLogger('CommentOverlayWindow')
 
+# comment_animation_improved.py にある ImageLoaderThread クラスを以下に置き換える
+
 class ImageLoaderThread(QThread):
     """画像読み込み用のスレッド"""
-    image_loaded = pyqtSignal(str, QImage, str)  # コメントIDを追加
+    # ★★★ 変更点1: シグナルの定義を変更 ★★★
+    # QImageではなく、ダウンロードした生のデータ(bytes)とコンテンツタイプ(str)を渡す
+    image_loaded = pyqtSignal(str, bytes, str, str)  # url, content_bytes, comment_id, content_type
 
     def __init__(self, url_queue):
         super().__init__()
@@ -38,25 +42,27 @@ class ImageLoaderThread(QThread):
                 try:
                     logger.info(f"画像の読み込みを開始: {url}, comment_id={comment_id}")
                     
-                    # リトライ処理の設定
                     max_retries = 3
-                    retry_delay = 2  # 初期待機時間（秒）
+                    retry_delay = 2
                     
                     for attempt in range(max_retries):
                         try:
+                            # ★★★ 変更点2: ここで全てのダウンロードを完結させる ★★★
                             response = requests.get(url, headers=self.headers, timeout=5)
                             if response.status_code == 200:
-                                image_data = BytesIO(response.content)
-                                image = QImage()
-                                if image.loadFromData(image_data.getvalue()):
-                                    logger.info(f"画像の読み込み成功: {url}")
-                                    self.image_loaded.emit(url, image, comment_id)  # コメントIDを送信
-                                    break  # 成功したらループを抜ける
-                                else:
-                                    logger.error(f"画像データの読み込みに失敗: {url}")
+                                # 生のバイトデータを取得
+                                content_bytes = response.content
+                                # Content-Typeヘッダーを取得
+                                content_type = response.headers.get('Content-Type', '')
+                                
+                                logger.info(f"画像のダウンロード成功: {url}, type: {content_type}")
+                                # シグナルで生のデータとコンテンツタイプをメインスレッドに送信
+                                self.image_loaded.emit(url, content_bytes, comment_id, content_type)
+                                break
+                            # ... (以降のリトライ処理は変更なし) ...
                             elif response.status_code == 429:
                                 if attempt < max_retries - 1:
-                                    wait_time = retry_delay * (2 ** attempt)  # 指数バックオフ
+                                    wait_time = retry_delay * (2 ** attempt)
                                     logger.warning(f"レート制限に引っかかりました。{wait_time}秒後にリトライします。(試行回数: {attempt + 1}/{max_retries})")
                                     time.sleep(wait_time)
                                     continue
@@ -77,7 +83,7 @@ class ImageLoaderThread(QThread):
                 except Exception as e:
                     logger.error(f"画像の読み込みに失敗: {str(e)}")
             except Empty:
-                continue  # キューが空の場合は次のループへ
+                continue
             except Exception as e:
                 logger.error(f"予期せぬエラー: {str(e)}")
                 continue
@@ -699,51 +705,64 @@ class CommentOverlayWindow(QWidget):
             self.image_loader_thread.wait()
             self.image_loader_thread = None
 
-    def handle_loaded_image(self, url, image, comment_id):
+    def handle_loaded_image(self, url, content_bytes, comment_id, content_type):
         """読み込んだ画像を処理（キャッシュなし）"""
-        logger.info(f"画像の読み込み完了を検知: URL={url}")
+        # ★★★ 変更点1: メソッドの引数を新しいシグナルに合わせる ★★★
+        logger.info(f"画像のデータ受信を検知: URL={url}")
         if url in self.pending_images:
             self.pending_images.remove(url)
-            if image:
-                logger.info(f"画像の処理を開始: URL={url}, サイズ={image.width()}x{image.height()}")
-                
-                # GIFファイルかどうかをチェック
-                if url.lower().endswith('.gif'):
-                    logger.debug(f"GIFファイルを検出: {url}")
+            if content_bytes:
+                # ★★★ 変更点2: URLの拡張子ではなく、Content-TypeでGIFを判定 ★★★
+                # これにより、拡張子がないURLにも対応可能になる
+                is_gif = 'image/gif' in content_type
+
+                if is_gif:
+                    logger.debug(f"GIFデータを処理: {url}")
                     try:
-                        response = requests.get(url, headers={
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                        })
-                        if response.status_code == 200:
-                            buffer = QBuffer()
-                            buffer.setData(QByteArray(response.content))
-                            buffer.open(QBuffer.ReadOnly)
-                            movie = QMovie()
-                            movie.setDevice(buffer)
-                            movie.setScaledSize(QSize(
-                                int(self.image_height * (image.width() / image.height())),
-                                self.image_height
-                            ))
-                            if not movie.isValid():
-                                logger.error(f"GIFアニメーションが無効: {url}")
-                                return
-                            movie.start()
-                            movie.buffer = buffer
-                            image_id = f"img_{int(time.time()*1000)}_{len(self.images)}"
-                            self.image_queue.append((image_id, movie, comment_id))
-                            logger.info(f"GIFアニメーションをキューに追加: ID={image_id}, URL={url}")
-                        else:
-                            logger.error(f"GIFデータの取得に失敗: HTTP {response.status_code}")
+                        # ★★★ 変更点3: メインスレッドでの通信を削除！ ★★★
+                        # バックグラウンドから渡されたバイトデータからQMovieを作成する
+                        buffer = QBuffer()
+                        buffer.setData(QByteArray(content_bytes))
+                        buffer.open(QBuffer.ReadOnly)
+                        
+                        movie = QMovie()
+                        movie.setDevice(buffer)
+                        
+                        # サイズ決定のために一度QImageを読み込む
+                        temp_image = QImage()
+                        temp_image.loadFromData(content_bytes)
+                        if temp_image.isNull():
+                             logger.error(f"GIFの画像データが無効: {url}")
+                             return
+
+                        movie.setScaledSize(QSize(
+                            int(self.image_height * (temp_image.width() / temp_image.height())),
+                            self.image_height
+                        ))
+                        
+                        if not movie.isValid():
+                            logger.error(f"GIFアニメーションが無効: {url}")
+                            return
+                        movie.start()
+                        movie.buffer = buffer
+                        image_id = f"img_{int(time.time()*1000)}_{len(self.images)}"
+                        self.image_queue.append((image_id, movie, comment_id))
+                        logger.info(f"GIFアニメーションをキューに追加: ID={image_id}, URL={url}")
                     except Exception as e:
                         logger.error(f"GIFアニメーションの処理中にエラー: {str(e)}")
                 else:
-                    scaled_width = int(self.image_height * (image.width() / image.height()))
-                    scaled_image = image.scaled(scaled_width, self.image_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    image_id = f"img_{int(time.time()*1000)}_{len(self.images)}"
-                    self.image_queue.append((image_id, scaled_image, comment_id))
-                    logger.info(f"画像をキューに追加: ID={image_id}, URL={url}")
+                    # 静止画の処理
+                    image = QImage()
+                    if image.loadFromData(content_bytes):
+                        scaled_width = int(self.image_height * (image.width() / image.height()))
+                        scaled_image = image.scaled(scaled_width, self.image_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        image_id = f"img_{int(time.time()*1000)}_{len(self.images)}"
+                        self.image_queue.append((image_id, scaled_image, comment_id))
+                        logger.info(f"画像をキューに追加: ID={image_id}, URL={url}")
+                    else:
+                        logger.error(f"静止画データの読み込みに失敗: URL={url}")
             else:
-                logger.error(f"画像の読み込みに失敗: URL={url}")
+                logger.error(f"画像データの受信に失敗: URL={url}")
         else:
             logger.warning(f"待機中の画像リストにURLが見つかりません: {url}")
 
