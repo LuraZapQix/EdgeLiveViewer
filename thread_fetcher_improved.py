@@ -329,63 +329,76 @@ class NextThreadFinder(QThread):
             
             lines = response.text.splitlines()
             
-            # --- 第1段階: 従来の強力な次スレ検索を実行 ---
-            
             starts_with_mark = self.thread_title.startswith('●')
             logger.info(f"現在のスレッド: {self.thread_title}, 前スレが「●」で始まるか: {starts_with_mark}")
             
-            candidates = []
+            # ★★★ 変更点1: 最初にすべての候補をレス数付きでリストアップする ★★★
+            all_candidates = []
             for line in lines:
                 if not line: continue
-                thread_id_dat, title_res = line.split("<>", 1)
-                thread_id = thread_id_dat.replace(".dat", "")
-                title = html.unescape(title_res.split(" (")[0])
-                
-                if thread_id == self.thread_id: continue
-                
-                if starts_with_mark:
-                    if title.startswith('●'):
-                        candidates.append({"id": thread_id, "title": title})
-                else:
-                    similarity = difflib.SequenceMatcher(None, self.thread_title, title).ratio()
-                    if similarity >= 0.3:
-                        next_number, _ = self.extract_last_number(title)
-                        candidates.append({
-                            "id": thread_id, "title": title, "similarity": similarity,
-                            "number": next_number, "is_star": bool(re.search(r'★(\d+)$', title))
+                try:
+                    thread_id_dat, title_res = line.split("<>", 1)
+                    
+                    title_res_match = re.search(r'(.*)\s*\((\d+)\)$', title_res)
+                    if not title_res_match: continue
+                    
+                    thread_id = thread_id_dat.replace(".dat", "")
+                    title = html.unescape(title_res_match.group(1).strip())
+                    res_count = int(title_res_match.group(2))
+                    
+                    if thread_id == self.thread_id: continue
+
+                    # 1000レス未満の候補のみをリストに追加する
+                    if res_count < 1000:
+                        all_candidates.append({
+                            "id": thread_id,
+                            "title": title,
+                            "res_count": res_count
                         })
-            
-            if not candidates:
-                logger.info("次スレ候補が見つかりませんでした")
+                except Exception as e:
+                    logger.warning(f"subject.txtの行解析エラー: {line}, {e}")
+
+            if not all_candidates:
+                logger.info("1000レス未満の次スレ候補が見つかりませんでした")
                 return None
+            logger.info(f"次スレ候補を{len(all_candidates)}件に絞り込みました（1000レス未満のスレッドのみ）")
+
+            # --- ここから下のロジックは、絞り込まれた `all_candidates` に対して実行 ---
             
             if starts_with_mark:
-                best_candidate = candidates[0]
-                logger.info(f"次スレを発見しました（●ルール）: {best_candidate['title']} (ID: {best_candidate['id']})")
-                return {"id": best_candidate["id"], "title": best_candidate["title"]}
+                # ●ルール: 絞り込まれた候補の中で、最もID(時刻)が新しいものを選択
+                mark_candidates = [c for c in all_candidates if c['title'].startswith('●')]
+                if mark_candidates:
+                    best_candidate = max(mark_candidates, key=lambda c: int(c['id']))
+                    logger.info(f"次スレを発見しました（●ルール）: {best_candidate['title']} (ID: {best_candidate['id']})")
+                    return best_candidate # 辞書のキーを合わせて返す
+            
+            # 通常ルール
             else:
+                # ★★★ 変更点2: 候補リストに類似度や番号情報を追加していく ★★★
+                candidates_with_info = []
+                for candidate in all_candidates:
+                    similarity = difflib.SequenceMatcher(None, self.thread_title, candidate['title']).ratio()
+                    if similarity >= 0.3:
+                        next_number, _ = self.extract_last_number(candidate['title'])
+                        candidate['similarity'] = similarity
+                        candidate['number'] = next_number
+                        candidate['is_star'] = bool(re.search(r'★(\d+)$', candidate['title']))
+                        candidates_with_info.append(candidate)
+                
                 current_number, has_number = self.extract_last_number(self.thread_title)
-                # --- ここからが修正箇所 ---
                 
                 if has_number:
-                    # 範囲を定義します（この数値を変更することで範囲を調整できます）
-                    LOWER_BOUND_OFFSET = 2  # 現在の番号からいくつ下まで許容するか (5 - 2 = 3)
-                    UPPER_BOUND_OFFSET = 3  # 現在の番号からいくつ上まで許容するか (5 + 3 = 8)
-                    
-                    # 開始番号を計算（ただし1未満にはならないようにする）
+                    LOWER_BOUND_OFFSET = 2
+                    UPPER_BOUND_OFFSET = 3
                     start_num = max(1, int(current_number) - LOWER_BOUND_OFFSET)
-                    # 終了番号を計算
                     end_num = int(current_number) + UPPER_BOUND_OFFSET
-                    
-                    # 期待する番号のリストを範囲で生成
                     expected_numbers = list(range(start_num, end_num + 1))
                 else:
-                    # 元スレに番号がない場合は、1スレ目や2スレ目を候補とする
                     expected_numbers = [1, 2]
 
-                # --- 修正箇所はここまで ---                
                 valid_candidates = []
-                for candidate in candidates:
+                for candidate in candidates_with_info:
                     next_num = candidate["number"]
                     if next_num in expected_numbers or \
                        (candidate["is_star"] and next_num in [1, 2]) or \
@@ -393,36 +406,29 @@ class NextThreadFinder(QThread):
                         valid_candidates.append(candidate)
                 
                 if valid_candidates:
-                    # ### 変更点1: ここで処理を終えず、見つかった場合はそのまま返す ###
                     best_candidate = max(valid_candidates, key=lambda c: c["similarity"])
                     logger.info(f"次スレを発見しました（通常ルール）: {best_candidate['title']} (ID: {best_candidate['id']}, 類似度: {best_candidate['similarity']:.2f})")
                     return {"id": best_candidate["id"], "title": best_candidate["title"]}
 
-            # ### 変更点2: ここからが「反省会」用のフォールバック検索 ###
-            # 上記の valid_candidates が空だった場合に、この処理が実行される
-            
+            # 反省会ルール (フォールバック)
             logger.info("通常の次スレが見つからなかったため、『反省会』スレッドのフォールバック検索を実行します。")
             
             reflection_candidates = []
-            # all_threadsの情報は既にcandidatesに入っているので、再利用する
-            for candidate in candidates: 
-                # 条件1: タイトルに「反省会」が含まれているか
+            # all_candidatesではなく、情報が付与されたcandidates_with_infoを使う
+            for candidate in candidates_with_info: 
                 if "反省会" in candidate["title"]:
-                    # 条件2: 元スレタイとの類似度が0.6以上か
-                    if candidate["similarity"] >= 0.6:
+                    if candidate.get("similarity", 0) >= 0.6: # 類似度情報がなければ0として扱う
                         reflection_candidates.append(candidate)
-                        logger.debug(f"反省会候補: {candidate['title']} (類似度: {candidate['similarity']:.2f})")
+                        logger.debug(f"反省会候補: {candidate['title']} (類似度: {candidate.get('similarity', 0):.2f})")
 
             if reflection_candidates:
-                # 複数の反省会候補が見つかった場合、最も類似度の高いものを選択
-                best_reflection_candidate = max(reflection_candidates, key=lambda c: c['similarity'])
+                best_reflection_candidate = max(reflection_candidates, key=lambda c: c.get('similarity', 0))
                 logger.info(f"次スレを発見しました（反省会ルール）: {best_reflection_candidate['title']}")
                 return {
                     "id": best_reflection_candidate["id"],
                     "title": best_reflection_candidate["title"]
                 }
             
-            # ### 変更点3: すべての検索で何も見つからなかった場合に、最終的にNoneを返す ###
             logger.info("すべての検索ルールで次スレを見つけることができませんでした。")
             return None
         
