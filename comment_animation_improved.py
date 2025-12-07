@@ -323,7 +323,6 @@ class CommentOverlayWindow(QWidget):
                 self.schedule_next_comment()
 
     def schedule_next_comment(self):
-        # (このメソッドは変更なし)
         if self.comment_queue:
             interval = self.calculate_flow_interval()
             QTimer.singleShot(interval, self.flow_comment)
@@ -366,7 +365,6 @@ class CommentOverlayWindow(QWidget):
         logger.info(f"flow_timer間隔を調整: {interval}ms (update_interval={self.current_update_interval}s, batch_size={self.current_batch_size})")
 
     def flow_comment(self):
-        # (このメソッドは変更なし)
         if self.comment_queue:
             comment = self.comment_queue.pop(0)
             self.add_comment(comment)

@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHeaderView, QComboBox, QMessageBox, QInputDialog, 
                              QMenu, QDialog, QTextEdit, QFormLayout, QGroupBox, QDockWidget,
                              QCheckBox)
-from PyQt5.QtCore import Qt, QTimer, QUrl, QPoint
+from PyQt5.QtCore import Qt, QTimer, QUrl, QPoint, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QDesktopServices
 
 from thread_fetcher_improved import ThreadFetcher, CommentFetcher, NextThreadFinder, MainstreamWatcher
@@ -29,6 +29,115 @@ from settings_dialog import SettingsDialog
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('EdgeLiveViewer')
+
+class PostCommentWorker(QThread):
+    """コメント投稿を非同期で実行するワーカースレッド"""
+    finished = pyqtSignal(bool, str, str, str, str)  # success, response, name, mail, comment
+    
+    def __init__(self, main_window, thread_id, name, mail, comment, parent=None):
+        super().__init__(parent)
+        self.main_window = main_window
+        self.thread_id = thread_id
+        self.name = name
+        self.mail = mail
+        self.comment = comment
+        
+    def run(self):
+        """別スレッドでHTTPリクエストを実行"""
+        success, response = self._send_post_request()
+        self.finished.emit(success, response, self.name, self.mail, self.comment)
+    
+    def _send_post_request(self):
+        """エッヂに書き込みリクエストを送信（スレッドセーフ）"""
+        url = "https://bbs.eddibb.cc/test/bbs.cgi"
+        headers = {
+            "User-Agent": "EdgeLiveViewer/1.0",
+            "Referer": f"https://bbs.eddibb.cc/liveedge/{self.thread_id}",
+            "Accept": "*/*",
+            "Accept-Encoding": "identity",
+            "Content-Type": "application/x-www-form-urlencoded; charset=Shift_JIS",
+            "Origin": "https://bbs.eddibb.cc",
+        }
+
+        def to_shift_jis(text):
+            try:
+                return text.encode("shift_jis")
+            except UnicodeEncodeError:
+                result = ""
+                for char in text:
+                    try:
+                        result += char.encode("shift_jis").decode("shift_jis")
+                    except UnicodeEncodeError:
+                        result += f"&#{ord(char)};"
+                return result.encode("shift_jis")
+
+        data = {
+            "bbs": "liveedge",
+            "key": self.thread_id,
+            "FROM": to_shift_jis(self.name),
+            "mail": to_shift_jis(self.mail) if self.mail else b"",
+            "MESSAGE": to_shift_jis(self.comment),
+            "submit": "書き込む".encode("shift_jis"),
+        }
+        
+        # メインウィンドウから設定を取得（スレッドセーフに注意）
+        auth_token = self.main_window.auth_token
+        tinker_token = self.main_window.settings.get("tinker_token", "")
+        
+        if auth_token:
+            data["mail"] = to_shift_jis(f"#{auth_token}")
+            logger.info(f"認証トークンを適用: {auth_token}")
+
+        session = requests.Session()
+        try:
+            if auth_token:
+                session.cookies.set("edge-token", auth_token, domain="bbs.eddibb.cc")
+            if tinker_token:
+                session.cookies.set("tinker-token", tinker_token, domain="bbs.eddibb.cc")
+
+            pre_response = session.get(
+                f"https://bbs.eddibb.cc/liveedge/{self.thread_id}",
+                headers=headers,
+                timeout=5
+            )
+            logger.info(f"事前リクエスト: ステータス={pre_response.status_code}")
+
+            logger.info(f"送信データ: {data}")
+            logger.info(f"送信クッキー: {session.cookies.get_dict()}")
+            response = session.post(url, headers=headers, data=data, timeout=10)
+
+            try:
+                response_text = response.content.decode("shift_jis")
+            except UnicodeDecodeError:
+                response_text = response.content.decode("utf-8", errors="replace")
+                logger.warning("Shift_JISデコード失敗、UTF-8で代替")
+
+            logger.info(f"レスポンスステータス: {response.status_code}")
+            logger.info(f"レスポンス本文: {response_text[:500]}...")
+
+            if response.status_code == 200 and "<title>書きこみました</title>" in response_text:
+                # トークン更新はメインスレッドで行う必要があるため、レスポンスに含める
+                new_tinker = session.cookies.get("tinker-token")
+                new_edge = session.cookies.get("edge-token")
+                # 新しいトークン情報をレスポンスに追加
+                token_info = f"__TOKENS__:{new_tinker or ''}:{new_edge or ''}"
+                logger.info("書き込みが正常に完了しました")
+                return True, response_text + token_info
+
+            auth_code_match = re.search(r"^\d{6}$", response_text.strip()) or re.search(
+                r'<input[^>]*name="auth-code"[^>]*value="([^"]+)"[^>]*>|認証コード[\'""](\d{6})[\'""]',
+                response_text
+            )
+            if auth_code_match:
+                auth_code = auth_code_match.group(0) if auth_code_match.group(0).isdigit() else (auth_code_match.group(1) or auth_code_match.group(2))
+                logger.info(f"認証コードを受信: {auth_code}")
+                return False, auth_code
+
+            logger.error("書き込み失敗: 成功条件を満たしていません")
+            return False, response_text
+        except requests.RequestException as e:
+            logger.error(f"書き込みリクエストに失敗: {str(e)}")
+            return False, str(e)
 
 class WriteWidget(QWidget):
     def __init__(self, parent=None):
@@ -772,7 +881,7 @@ class MainWindow(QMainWindow):
             return False, str(e)
 
     def post_comment(self):
-        """コメントをエッジに投稿する"""
+        """コメントをエッジに投稿する（非同期版）"""
         if not self.current_thread_id:
             QMessageBox.warning(self, "エラー", "スレッドに接続してください。")
             return
@@ -794,11 +903,25 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "投稿制限", f"5秒以内の連続投稿はできません。あと {remaining:.1f}秒 お待ちください。")
             return
         
-        # 認証トークンがなくてもリクエストを送信し、サーバーからの応答を処理
-        success, response = self.send_post_request(self.current_thread_id, name, mail, comment)
+        # 非同期でコメント投稿を実行（UIをブロックしない）
+        self.post_worker = PostCommentWorker(
+            self, self.current_thread_id, name, mail, comment
+        )
+        self.post_worker.finished.connect(self._on_post_finished)
+        self.post_worker.start()
+        
+        # 投稿中の状態を表示
+        self.statusBar().showMessage("書き込み中...")
+        self.write_widget.post_button.setEnabled(False)
+        logger.info("コメント投稿を開始（非同期）")
+    
+    def _on_post_finished(self, success, response, name, mail, comment):
+        """コメント投稿完了時の処理"""
+        self.write_widget.post_button.setEnabled(True)
         
         if success:
             self.last_post_time = time.time()
+            current_time = time.time()
             comment_key = f"{current_time}_{comment}"
             self.my_comments[comment_key] = {
                 "text": comment,
@@ -807,7 +930,23 @@ class MainWindow(QMainWindow):
             }
             self.write_widget.comment_input.clear()
             self.statusBar().showMessage("書き込みが完了しました。")
-            logger.info("コメント投稿が成功しました")
+            logger.info("コメント投稿が成功しました（非同期）")
+            
+            # トークン更新処理
+            if "__TOKENS__:" in response:
+                token_part = response.split("__TOKENS__:")[1]
+                tokens = token_part.split(":")
+                if len(tokens) >= 2:
+                    new_tinker, new_edge = tokens[0], tokens[1]
+                    tinker_token = self.settings.get("tinker_token", "")
+                    if new_tinker and new_tinker != tinker_token:
+                        self.settings["tinker_token"] = new_tinker
+                        self.save_settings()
+                        logger.info(f"tinker-tokenを更新: {new_tinker}")
+                    if new_edge and new_edge != self.auth_token:
+                        self.auth_token = new_edge
+                        self.save_auth_token(new_edge)
+                        logger.info(f"edge-tokenを更新: {new_edge}")
         else:
             if isinstance(response, str) and re.match(r"^\d{6}$", response):
                 # サーバーから返された6桁の認証コードをダイアログに渡す
