@@ -1271,8 +1271,21 @@ class MainWindow(QMainWindow):
             overlay_width = self.settings.get("overlay_width", 600)
             overlay_height = self.settings.get("overlay_height", 800)
             self.overlay_window.setGeometry(overlay_x, overlay_y, overlay_width, overlay_height)
+            
+            # 最大化状態を復元
+            if self.settings.get("overlay_is_maximized", False):
+                self.overlay_window.is_maximized = True
+                # 通常時のジオメトリを復元
+                from PyQt5.QtCore import QRect
+                normal_x = self.settings.get("overlay_normal_x", 100)
+                normal_y = self.settings.get("overlay_normal_y", 100)
+                normal_width = self.settings.get("overlay_normal_width", 600)
+                normal_height = self.settings.get("overlay_normal_height", 800)
+                self.overlay_window._normal_geometry = QRect(normal_x, normal_y, normal_width, normal_height)
+                logger.info(f"最大化状態を復元: normal_geometry={self.overlay_window._normal_geometry}")
+            
             self.overlay_window.show()
-            logger.info(f"コメントオーバーレイウィンドウを開きました: x={overlay_x}, y={overlay_y}, width={overlay_width}, height={overlay_height}")
+            logger.info(f"コメントオーバーレイウィンドウを開きました: x={overlay_x}, y={overlay_y}, width={overlay_width}, height={overlay_height}, is_maximized={self.overlay_window.is_maximized}")
         else:
             self.overlay_window.comments.clear()
             self.overlay_window.row_usage.clear()
@@ -1461,18 +1474,30 @@ class MainWindow(QMainWindow):
             logger.error(f"設定の読み込みに失敗しました: {str(e)}")
         return default_settings
     
-    def save_window_position(self, x, y, width, height):
+    def save_window_position(self, x, y, width, height, is_maximized=None, normal_geometry=None):
         self.settings["overlay_x"] = x
         self.settings["overlay_y"] = y
         self.settings["overlay_width"] = width
         self.settings["overlay_height"] = height
+        
+        # 最大化状態を保存
+        if is_maximized is not None:
+            self.settings["overlay_is_maximized"] = is_maximized
+        
+        # 通常時のジオメトリを保存（最大化状態から元に戻すために必要）
+        if normal_geometry is not None:
+            self.settings["overlay_normal_x"] = normal_geometry.x()
+            self.settings["overlay_normal_y"] = normal_geometry.y()
+            self.settings["overlay_normal_width"] = normal_geometry.width()
+            self.settings["overlay_normal_height"] = normal_geometry.height()
+        
         try:
             settings_dir = os.path.expanduser("~/.edge_live_viewer")
             os.makedirs(settings_dir, exist_ok=True)
             settings_file = os.path.join(settings_dir, "settings.json")
             with open(settings_file, "w", encoding="utf-8") as f:
                 json.dump(self.settings, f, indent=4)
-            logger.info(f"ウィンドウ位置とサイズを保存しました: x={x}, y={y}, width={width}, height={height}")
+            logger.info(f"ウィンドウ位置とサイズを保存しました: x={x}, y={y}, width={width}, height={height}, is_maximized={is_maximized}")
         except Exception as e:
             logger.error(f"ウィンドウ位置とサイズの保存に失敗しました: {str(e)}")
     
