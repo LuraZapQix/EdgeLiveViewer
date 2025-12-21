@@ -256,6 +256,7 @@ class CommentFetcher(QThread):
                 if self.is_first_fetch:
                     self.is_first_fetch = False
                 
+                # 1000レス到達チェック
                 if len(lines) >= 1000 and not self.is_past_thread:
                     self.thread_filled.emit(self.thread_id, self.thread_title)
                     self.thread_over_1000.emit(f"スレッド： {self.thread_title} が1000レスに到達しました。")
@@ -287,6 +288,7 @@ class CommentFetcher(QThread):
                 logger.info(f"CommentFetcher {self.thread_id} を強制終了しました")
         else:
             logger.info(f"CommentFetcher {self.thread_id} を正常に停止しました")
+
 
 class NextThreadFinder(QThread):
     next_thread_found = pyqtSignal(dict)
